@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "892989458892",
+    "project_id": "modchat-f6594",
+    "storage_bucket": "modchat-f6594.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:892989458892:android:1611b765355d1b5937b569",
+        "android_client_info": {
+          "package_name": "com.example.modchat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDnEJXmpjl13wQOYTV1Mf6rWMAbsFVJ64"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:892989458892:android:72d392f6174296f837b569",
+        "android_client_info": {
+          "package_name": "com.example.modchat_mvp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDnEJXmpjl13wQOYTV1Mf6rWMAbsFVJ64"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
