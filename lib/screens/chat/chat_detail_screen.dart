@@ -14,7 +14,11 @@ class ChatDetailScreen extends ConsumerStatefulWidget {
   static const routeName = '/chat-detail';
   final String chatId;
   final String peerId;
-  const ChatDetailScreen({super.key, required this.chatId, required this.peerId});
+  const ChatDetailScreen({
+    super.key,
+    required this.chatId,
+    required this.peerId,
+  });
 
   @override
   ConsumerState<ChatDetailScreen> createState() => _ChatDetailScreenState();
@@ -41,19 +45,28 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 
   Future<void> _sendText(String text) async {
-    await ref.read(chatServiceProvider).sendText(chatId: widget.chatId, peerId: widget.peerId, text: text);
+    await ref
+        .read(chatServiceProvider)
+        .sendText(chatId: widget.chatId, peerId: widget.peerId, text: text);
     _scrollToBottom();
   }
 
-  Future<void> _sendMedia(Uint8List bytes, String name, String contentType, MessageType type) async {
-    await ref.read(chatServiceProvider).sendMedia(
-      chatId: widget.chatId,
-      peerId: widget.peerId,
-      bytes: bytes,
-      fileName: name,
-      contentType: contentType,
-      type: type,
-    );
+  Future<void> _sendMedia(
+    Uint8List bytes,
+    String name,
+    String contentType,
+    MessageType type,
+  ) async {
+    await ref
+        .read(chatServiceProvider)
+        .sendMedia(
+          chatId: widget.chatId,
+          peerId: widget.peerId,
+          bytes: bytes,
+          fileName: name,
+          contentType: contentType,
+          type: type,
+        );
     _scrollToBottom();
   }
 
@@ -75,9 +88,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: _PeerTitle(peerId: widget.peerId),
-      ),
+      appBar: AppBar(title: _PeerTitle(peerId: widget.peerId)),
       body: SafeArea(
         child: Column(
           children: [
@@ -88,16 +99,23 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                     // mark seen when chat opened
                     ref.read(chatServiceProvider).markAllSeen(widget.chatId);
                   }
-                  WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+                  WidgetsBinding.instance.addPostFrameCallback(
+                    (_) => _scrollToBottom(),
+                  );
                   return ListView.builder(
                     controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
                     itemCount: list.length,
                     itemBuilder: (context, index) {
                       final m = list[index];
                       final isMe = m.senderId == me;
                       return Align(
-                        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                        alignment: isMe
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
                         child: MessageBubble(message: m, isMe: isMe),
                       );
                     },
@@ -109,7 +127,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             ),
             Row(
               children: [
-                Expanded(child: InputField(onSend: _sendText, onSendMedia: _sendMedia)),
+                Expanded(
+                  child: InputField(onSend: _sendText, onSendMedia: _sendMedia),
+                ),
                 AudioRecorderWidget(onSendAudio: _sendMedia),
               ],
             ),
@@ -131,11 +151,18 @@ class _PeerTitle extends ConsumerWidget {
         children: [
           CircleAvatar(
             radius: 16,
-            backgroundImage: (u?.profilePicUrl?.isNotEmpty == true) ? NetworkImage(u!.profilePicUrl!) : null,
-            child: (u?.profilePicUrl?.isNotEmpty == true) ? null : const Icon(Icons.person, size: 18),
+            backgroundImage: (u?.profileImageUrl?.isNotEmpty == true)
+                ? NetworkImage(u!.profileImageUrl!)
+                : null,
+            child: (u?.profileImageUrl?.isNotEmpty == true)
+                ? null
+                : const Icon(Icons.person, size: 18),
           ),
           const SizedBox(width: 8),
-          Text(u?.name.isNotEmpty == true ? u!.name : peerId, style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text(
+            u?.name.isNotEmpty == true ? u!.name : peerId,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
         ],
       ),
       loading: () => const Text('...'),

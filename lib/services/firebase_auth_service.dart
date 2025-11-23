@@ -1,6 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../models/user_model.dart';
 import 'firestore_service.dart';
 
 class FirebaseAuthService {
@@ -38,22 +37,26 @@ class FirebaseAuthService {
     await credential.user!.updateDisplayName(name);
     await credential.user!.sendEmailVerification();
 
-    // Create profile in Firestore
-    await _firestore.users.doc(credential.user!.uid).set(
-          ModUser(
-            userId: credential.user!.uid,
-            name: name,
-            email: email,
-            profilePicUrl: null,
-            about: '',
-            createdAt: Timestamp.now(),
-          ).toMap(),
-        );
+    // Create profile in Firestore with final schema
+    await _firestore.users.doc(credential.user!.uid).set({
+      'userId': credential.user!.uid,
+      'name': name,
+      'email': email,
+      'profileImageUrl': null,
+      'about': '',
+      'createdAt': FieldValue.serverTimestamp(),
+      'lastSeen': null,
+      'blockedUsers': <String>[],
+      'messageLimitDaily': 0,
+      'messageSentToday': 0,
+      'dmPrivacy': 'everyone',
+      'role': 'user',
+    });
 
     return credential;
   }
 
-  /// ✅ Send email verification
+  /// Send email verification
   Future<void> sendEmailVerification() async {
     final u = _auth.currentUser;
     if (u != null && !u.emailVerified) {

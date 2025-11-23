@@ -18,24 +18,32 @@ class ChatService {
 
   Future<String> startOrOpenChat(String peerId) async {
     final me = _auth.currentUser!.uid;
-    final chatId = chatIdFor(me, peerId);
-    final chatDoc = _fs.chats.doc(chatId);
-    final snap = await chatDoc.get();
-    if (!snap.exists) {
-      await chatDoc.set({
-        'id': chatId,
-        'members': [me, peerId],
-        'createdAt': FieldValue.serverTimestamp(),
-        'lastMessage': null,
-        'lastMessageType': null,
-        'lastTimestamp': FieldValue.serverTimestamp(),
-      });
+    final members = [me, peerId]..sort();
+    // Try to find existing chat with exact members match
+    final existing = await _fs.dmChats
+        .where('members', isEqualTo: members)
+        .limit(1)
+        .get();
+    if (existing.docs.isNotEmpty) {
+      return existing.docs.first.id;
     }
+    final chatId = chatIdFor(me, peerId);
+    final chatDoc = _fs.dmChats.doc(chatId);
+    await chatDoc.set({
+      'id': chatId,
+      'members': members,
+      'createdAt': FieldValue.serverTimestamp(),
+      'lastMessage': null,
+      'lastMessageType': null,
+      'lastTimestamp': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
     return chatId;
   }
 
-  Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> streamChats(String uid) {
-    return _fs.chats
+  Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> streamChats(
+    String uid,
+  ) {
+    return _fs.dmChats
         .where('members', arrayContains: uid)
         .orderBy('lastTimestamp', descending: true)
         .snapshots()
@@ -47,10 +55,17 @@ class ChatService {
         .messages(chatId)
         .orderBy('timestamp', descending: false)
         .snapshots()
-        .map((s) => s.docs.map((d) => MessageModel.fromMap(d.data(), d.id)).toList());
+        .map(
+          (s) =>
+              s.docs.map((d) => MessageModel.fromMap(d.data(), d.id)).toList(),
+        );
   }
 
-  Future<void> sendText({required String chatId, required String peerId, required String text}) async {
+  Future<void> sendText({
+    required String chatId,
+    required String peerId,
+    required String text,
+  }) async {
     final uid = _auth.currentUser!.uid;
     final doc = _fs.messages(chatId).doc();
     final now = FieldValue.serverTimestamp();
@@ -64,7 +79,7 @@ class ChatService {
       'isSeen': false,
       'status': 1,
     });
-    await _fs.chats.doc(chatId).update({
+    await _fs.dmChats.doc(chatId).update({
       'lastMessage': text,
       'lastMessageType': 'text',
       'lastTimestamp': now,
@@ -107,7 +122,7 @@ class ChatService {
       'status': 1,
     });
 
-    await _fs.chats.doc(chatId).update({
+    await _fs.dmChats.doc(chatId).update({
       'lastMessage': type.name,
       'lastMessageType': type.name,
       'lastTimestamp': now,
