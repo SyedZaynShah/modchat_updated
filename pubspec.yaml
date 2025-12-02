@@ -42,6 +42,9 @@ dependencies:
   flutter_dotenv: ^6.0.0
   flutter_webrtc: ^1.2.1
   file_picker: ^10.3.7
+  mime: ^1.0.5
+  image_picker: ^1.1.2
+  record: ^5.0.4
   just_audio: ^0.10.5
   video_player: ^2.10.1
   pdfx: ^2.9.2

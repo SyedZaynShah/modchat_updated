@@ -39,7 +39,13 @@ class ChatScreen extends ConsumerWidget {
               );
               final last = data['lastMessage'] as String?;
               final ts = (data['lastTimestamp'] as Timestamp?)?.toDate();
-              return _Tile(chatId: d.id, peerId: peerId, last: last, time: ts);
+              return _Tile(
+                key: ValueKey(d.id),
+                chatId: d.id,
+                peerId: peerId,
+                last: last,
+                time: ts,
+              );
             },
           );
         },
@@ -56,6 +62,7 @@ class _Tile extends ConsumerWidget {
   final String? last;
   final DateTime? time;
   const _Tile({
+    super.key,
     required this.chatId,
     required this.peerId,
     this.last,

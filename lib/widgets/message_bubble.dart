@@ -12,8 +12,15 @@ class MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final align = isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
-    final bg = isMe ? AppColors.sinopia.withValues(alpha: 0.18) : Colors.white.withValues(alpha: 0.06);
-    final border = isMe ? Border.all(color: AppColors.sinopia.withValues(alpha: 0.6), width: 1.2) : Border.all(color: Colors.white.withValues(alpha: 0.2));
+    final bg = isMe
+        ? AppColors.sinopia.withValues(alpha: 0.18)
+        : Colors.white.withValues(alpha: 0.06);
+    final border = isMe
+        ? Border.all(
+            color: AppColors.sinopia.withValues(alpha: 0.6),
+            width: 1.2,
+          )
+        : Border.all(color: Colors.white.withValues(alpha: 0.2));
 
     return Column(
       crossAxisAlignment: align,
@@ -30,7 +37,11 @@ class MessageBubble extends StatelessWidget {
             ),
             border: border,
             boxShadow: [
-              BoxShadow(color: AppColors.sinopia.withValues(alpha: isMe ? 0.25 : 0.05), blurRadius: 12, spreadRadius: 1),
+              BoxShadow(
+                color: AppColors.sinopia.withValues(alpha: isMe ? 0.25 : 0.05),
+                blurRadius: 12,
+                spreadRadius: 1,
+              ),
             ],
           ),
           padding: const EdgeInsets.all(12),
@@ -44,9 +55,20 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget _content(BuildContext context) {
+    if (message.isDeletedForAll) {
+      return Text(
+        'This message was deleted.',
+        style: const TextStyle(
+          fontSize: 16,
+          color: Colors.white70,
+          fontStyle: FontStyle.italic,
+        ),
+      );
+    }
     switch (message.messageType) {
       case MessageType.text:
-        return Text(message.text ?? '', style: const TextStyle(fontSize: 16));
+        final t = (message.text ?? '') + (message.edited ? ' (edited)' : '');
+        return Text(t, style: const TextStyle(fontSize: 16));
       case MessageType.image:
       case MessageType.video:
       case MessageType.file:
@@ -76,9 +98,7 @@ class MessageBubble extends StatelessWidget {
     }
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 16, color: color),
-      ],
+      children: [Icon(icon, size: 16, color: color)],
     );
   }
 }

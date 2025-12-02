@@ -6,7 +6,14 @@ import 'webrtc_service_impl_io.dart'
 class RecordingResult {
   final Uint8List bytes;
   final String mimeType;
-  RecordingResult({required this.bytes, required this.mimeType});
+  final String filePath;
+  final int durationMs;
+  RecordingResult({
+    required this.bytes,
+    required this.mimeType,
+    required this.filePath,
+    required this.durationMs,
+  });
 }
 
 abstract class WebRTCService {

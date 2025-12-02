@@ -5,11 +5,13 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   app_links
   cloud_firestore
+  file_selector_windows
   firebase_auth
   firebase_core
   flutter_webrtc
   pdfx
   permission_handler_windows
+  record_windows
   url_launcher_windows
 )
 

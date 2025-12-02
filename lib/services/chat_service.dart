@@ -51,14 +51,21 @@ class ChatService {
   }
 
   Stream<List<MessageModel>> streamMessages(String chatId) {
+    final uid = _auth.currentUser?.uid;
     return _fs
         .messages(chatId)
         .orderBy('timestamp', descending: false)
         .snapshots()
-        .map(
-          (s) =>
-              s.docs.map((d) => MessageModel.fromMap(d.data(), d.id)).toList(),
-        );
+        .map((s) {
+          final docs = s.docs.where((d) {
+            final data = d.data();
+            final deletedFor = List<String>.from(
+              (data['deletedFor'] as List?) ?? const [],
+            );
+            return uid == null ? true : !deletedFor.contains(uid);
+          });
+          return docs.map((d) => MessageModel.fromMap(d.data(), d.id)).toList();
+        });
   }
 
   Future<void> sendText({
@@ -74,10 +81,14 @@ class ChatService {
       'senderId': uid,
       'receiverId': peerId,
       'text': text,
-      'messageType': 'text',
+      'mediaUrl': null,
+      'mediaType': null,
       'timestamp': now,
       'isSeen': false,
       'status': 1,
+      'deletedFor': <String>[],
+      'edited': false,
+      'isDeletedForAll': false,
     });
     await _fs.dmChats.doc(chatId).update({
       'lastMessage': text,
@@ -93,6 +104,7 @@ class ChatService {
     required String fileName,
     required String contentType,
     required MessageType type,
+    int? audioDurationMs,
   }) async {
     final uid = _auth.currentUser!.uid;
     final msgRef = _fs.messages(chatId).doc();
@@ -109,17 +121,23 @@ class ChatService {
     );
 
     final now = FieldValue.serverTimestamp();
+    final mediaType = _mediaTypeFor(fileName, contentType, type);
     await msgRef.set({
       'chatId': chatId,
       'senderId': uid,
       'receiverId': peerId,
       'text': null,
-      'messageType': type.name,
       'mediaUrl': uploaded.signedUrl,
+      'mediaType': mediaType,
       'mediaSize': uploaded.size,
+      if (type == MessageType.audio && audioDurationMs != null)
+        'audioDurationMs': audioDurationMs,
       'timestamp': now,
       'isSeen': false,
       'status': 1,
+      'deletedFor': <String>[],
+      'edited': false,
+      'isDeletedForAll': false,
     });
 
     await _fs.dmChats.doc(chatId).update({
@@ -162,5 +180,72 @@ class ChatService {
       });
     }
     await batch.commit();
+  }
+
+  Future<void> editMessage({
+    required String chatId,
+    required String messageId,
+    required String newText,
+  }) async {
+    final uid = _auth.currentUser!.uid;
+    final ref = _fs.messages(chatId).doc(messageId);
+    final snap = await ref.get();
+    if (!snap.exists) return;
+    final data = snap.data() as Map<String, dynamic>;
+    if (data['senderId'] != uid) {
+      throw Exception('Not authorized to edit this message');
+    }
+    await ref.update({
+      'text': newText,
+      'edited': true,
+      'editedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<void> deleteForMe({
+    required String chatId,
+    required String messageId,
+  }) async {
+    final uid = _auth.currentUser!.uid;
+    final ref = _fs.messages(chatId).doc(messageId);
+    await ref.update({
+      'deletedFor': FieldValue.arrayUnion([uid]),
+    });
+  }
+
+  Future<void> deleteForEveryone({
+    required String chatId,
+    required String messageId,
+  }) async {
+    final ref = _fs.messages(chatId).doc(messageId);
+    final snap = await ref.get();
+    if (!snap.exists) return;
+    await ref.update({
+      'isDeletedForAll': true,
+      'deletedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  String _mediaTypeFor(String name, String contentType, MessageType type) {
+    if (type == MessageType.image) return 'image';
+    if (type == MessageType.video) return 'video';
+    if (type == MessageType.audio) return 'audio';
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.pdf') || contentType.contains('pdf')) return 'pdf';
+    if (lower.endsWith('.doc') ||
+        lower.endsWith('.docx') ||
+        contentType.contains('msword') ||
+        contentType.contains('officedocument.wordprocessingml'))
+      return 'doc';
+    if (lower.endsWith('.ppt') ||
+        lower.endsWith('.pptx') ||
+        contentType.contains('powerpoint'))
+      return 'ppt';
+    if (lower.endsWith('.zip') ||
+        lower.endsWith('.rar') ||
+        contentType.contains('zip') ||
+        contentType.contains('rar'))
+      return 'zip';
+    return 'file';
   }
 }

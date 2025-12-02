@@ -7,6 +7,7 @@ class WebRTCServiceImpl implements WebRTCService {
   MediaStream? _stream;
   MediaRecorder? _recorder;
   String? _filePath;
+  Stopwatch? _sw;
 
   Future<void> _ensureStream() async {
     _stream ??= await navigator.mediaDevices.getUserMedia({'audio': true});
@@ -17,22 +18,31 @@ class WebRTCServiceImpl implements WebRTCService {
     await _ensureStream();
     _recorder = MediaRecorder();
     final dir = await getTemporaryDirectory();
-    _filePath = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.webm';
+    _filePath =
+        '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.webm';
     await _recorder!.start(
       _filePath!,
       audioChannel: RecorderAudioChannel.INPUT,
     );
+    _sw = Stopwatch()..start();
   }
 
   @override
   Future<RecordingResult> stopRecording() async {
     await _recorder?.stop();
+    final elapsed = _sw?.elapsedMilliseconds ?? 0;
+    _sw?.stop();
     if (_filePath == null) {
       throw Exception('Recording file missing');
     }
     final file = File(_filePath!);
     final bytes = await file.readAsBytes();
-    return RecordingResult(bytes: bytes, mimeType: 'audio/webm');
+    return RecordingResult(
+      bytes: bytes,
+      mimeType: 'audio/webm',
+      filePath: _filePath!,
+      durationMs: elapsed,
+    );
   }
 
   @override
