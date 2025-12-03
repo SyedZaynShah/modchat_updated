@@ -9,15 +9,21 @@ final chatServiceProvider = Provider<ChatService>((ref) {
   return ChatService(fs);
 });
 
-final chatListProvider = StreamProvider<List<QueryDocumentSnapshot<Map<String, dynamic>>>>((ref) {
-  final user = ref.watch(currentUserProvider);
-  final service = ref.watch(chatServiceProvider);
-  final uid = user?.uid;
-  if (uid == null) return const Stream.empty();
-  return service.streamChats(uid);
-});
+final chatListProvider =
+    StreamProvider<List<QueryDocumentSnapshot<Map<String, dynamic>>>>((ref) {
+      ref.keepAlive();
+      final user = ref.watch(currentUserProvider);
+      final service = ref.watch(chatServiceProvider);
+      final uid = user?.uid;
+      if (uid == null) return const Stream.empty();
+      return service.streamChats(uid);
+    });
 
-final messagesProvider = StreamProvider.family<List<MessageModel>, String>((ref, chatId) {
+final messagesProvider = StreamProvider.family<List<MessageModel>, String>((
+  ref,
+  chatId,
+) {
+  ref.keepAlive();
   final service = ref.watch(chatServiceProvider);
   return service.streamMessages(chatId);
 });

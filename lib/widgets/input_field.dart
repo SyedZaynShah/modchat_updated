@@ -173,11 +173,13 @@ class _InputFieldState extends State<InputField> {
     if (lower.endsWith('.pdf')) return 'application/pdf';
     if (lower.endsWith('.zip')) return 'application/zip';
     if (lower.endsWith('.rar')) return 'application/vnd.rar';
-    if (lower.endsWith('.ppt') || lower.endsWith('.pptx'))
+    if (lower.endsWith('.ppt') || lower.endsWith('.pptx')) {
       return 'application/vnd.ms-powerpoint';
+    }
     if (lower.endsWith('.doc')) return 'application/msword';
-    if (lower.endsWith('.docx'))
+    if (lower.endsWith('.docx')) {
       return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
     if (lower.endsWith('.mp3')) return 'audio/mpeg';
     if (lower.endsWith('.wav')) return 'audio/wav';
     if (lower.endsWith('.ogg')) return 'audio/ogg';

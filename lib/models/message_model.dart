@@ -102,7 +102,10 @@ class MessageModel {
       deliveredAt: data['deliveredAt'] as Timestamp?,
       status: (data['status'] as num?)?.toInt() ?? 1,
       edited: data['edited'] as bool? ?? false,
-      isDeletedForAll: data['isDeletedForAll'] as bool? ?? false,
+      isDeletedForAll:
+          (data['isDeletedForAll'] as bool?) ??
+          (data['deletedForEveryone'] as bool?) ??
+          false,
     );
   }
 

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:photo_view/photo_view.dart';
 import '../models/message_model.dart';
+import '../services/supabase_service.dart';
 
 class FilePreviewWidget extends StatelessWidget {
   final MessageModel message;
@@ -30,24 +31,57 @@ class FilePreviewWidget extends StatelessWidget {
 class _ImagePreview extends StatelessWidget {
   final String url;
   const _ImagePreview({required this.url});
+  Future<String> _resolve(String u) async {
+    if (u.startsWith('sb://')) {
+      final s = u.substring(5);
+      final i = s.indexOf('/');
+      final bucket = s.substring(0, i);
+      final path = s.substring(i + 1);
+      return SupabaseService.instance.getSignedUrl(
+        bucket,
+        path,
+        expiresInSeconds: 600,
+      );
+    }
+    return u;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => Scaffold(
-              backgroundColor: Colors.black,
-              appBar: AppBar(),
-              body: PhotoView(imageProvider: NetworkImage(url)),
+    return FutureBuilder<String>(
+      future: _resolve(url),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const SizedBox(
+            height: 180,
+            width: 260,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          );
+        }
+        final resolved = snap.data!;
+        return GestureDetector(
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => Scaffold(
+                  backgroundColor: Colors.black,
+                  appBar: AppBar(),
+                  body: PhotoView(imageProvider: NetworkImage(resolved)),
+                ),
+              ),
+            );
+          },
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.network(
+              resolved,
+              fit: BoxFit.cover,
+              height: 180,
+              width: 260,
             ),
           ),
         );
       },
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.network(url, fit: BoxFit.cover, height: 180, width: 260),
-      ),
     );
   }
 }
@@ -60,67 +94,81 @@ class _VideoPreview extends StatefulWidget {
 }
 
 class _VideoPreviewState extends State<_VideoPreview> {
-  late VideoPlayerController _controller;
-  bool _ready = false;
-  @override
-  void initState() {
-    super.initState();
-    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))
-      ..initialize().then((_) => setState(() => _ready = true));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
+  Future<VideoPlayerController> _initController() async {
+    String u = widget.url;
+    if (u.startsWith('sb://')) {
+      final s = u.substring(5);
+      final i = s.indexOf('/');
+      final bucket = s.substring(0, i);
+      final path = s.substring(i + 1);
+      u = await SupabaseService.instance.getSignedUrl(
+        bucket,
+        path,
+        expiresInSeconds: 600,
+      );
+    }
+    final ctl = VideoPlayerController.networkUrl(Uri.parse(u));
+    await ctl.initialize();
+    return ctl;
   }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => _controller.value.isPlaying
-          ? _controller.pause()
-          : _controller.play(),
-      child: SizedBox(
-        width: 260,
-        height: 180,
-        child: _ready
-            ? Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: VideoPlayer(_controller),
+    return FutureBuilder<VideoPlayerController>(
+      future: _initController(),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const SizedBox(
+            width: 260,
+            height: 180,
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final controller = snap.data!;
+        return GestureDetector(
+          onTap: () => controller.value.isPlaying
+              ? controller.pause()
+              : controller.play(),
+          child: SizedBox(
+            width: 260,
+            height: 180,
+            child: Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: VideoPlayer(controller),
+                ),
+                const Align(
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.play_circle,
+                    size: 48,
+                    color: Colors.white70,
                   ),
-                  const Align(
-                    alignment: Alignment.center,
-                    child: Icon(
-                      Icons.play_circle,
-                      size: 48,
+                ),
+                Positioned(
+                  right: 6,
+                  top: 6,
+                  child: InkWell(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => _VideoFullscreen(url: widget.url),
+                        ),
+                      );
+                    },
+                    child: const Icon(
+                      Icons.open_in_full,
                       color: Colors.white70,
+                      size: 18,
                     ),
                   ),
-                  Positioned(
-                    right: 6,
-                    top: 6,
-                    child: InkWell(
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => _VideoFullscreen(url: widget.url),
-                          ),
-                        );
-                      },
-                      child: const Icon(
-                        Icons.open_in_full,
-                        color: Colors.white70,
-                        size: 18,
-                      ),
-                    ),
-                  ),
-                ],
-              )
-            : const Center(child: CircularProgressIndicator()),
-      ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -147,7 +195,19 @@ class _AudioInlineState extends State<_AudioInline> {
 
   Future<void> _init() async {
     try {
-      await _player.setUrl(widget.url);
+      var u = widget.url;
+      if (u.startsWith('sb://')) {
+        final s = u.substring(5);
+        final i = s.indexOf('/');
+        final bucket = s.substring(0, i);
+        final path = s.substring(i + 1);
+        u = await SupabaseService.instance.getSignedUrl(
+          bucket,
+          path,
+          expiresInSeconds: 600,
+        );
+      }
+      await _player.setUrl(u);
       _duration = _player.duration ?? Duration.zero;
       _player.positionStream.listen((p) => setState(() => _position = p));
       _player.durationStream.listen(
@@ -222,19 +282,35 @@ class _FileTile extends StatelessWidget {
   const _FileTile({required this.url});
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text(
-        url.split('/').last,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      leading: const Icon(Icons.insert_drive_file, color: Colors.white70),
-      trailing: const Icon(Icons.open_in_new, color: Colors.white70),
-      onTap: () {
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => _PdfMaybe(url: url)));
+    return FutureBuilder<String>(
+      future: () async {
+        if (url.startsWith('sb://')) {
+          final s = url.substring(5);
+          final i = s.indexOf('/');
+          final bucket = s.substring(0, i);
+          final path = s.substring(i + 1);
+          return SupabaseService.instance.getSignedUrl(
+            bucket,
+            path,
+            expiresInSeconds: 600,
+          );
+        }
+        return url;
+      }(),
+      builder: (context, snap) {
+        final name = url.split('/').last;
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          leading: const Icon(Icons.insert_drive_file, color: Colors.white70),
+          trailing: const Icon(Icons.open_in_new, color: Colors.white70),
+          onTap: () {
+            if (!snap.hasData) return;
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => _PdfMaybe(url: snap.data!)),
+            );
+          },
+        );
       },
     );
   }
@@ -299,8 +375,25 @@ class _VideoFullscreenState extends State<_VideoFullscreen> {
   @override
   void initState() {
     super.initState();
-    _ctl = VideoPlayerController.networkUrl(Uri.parse(widget.url))
-      ..initialize().then((_) => setState(() => _ready = true));
+    _init();
+  }
+
+  Future<void> _init() async {
+    String u = widget.url;
+    if (u.startsWith('sb://')) {
+      final s = u.substring(5);
+      final i = s.indexOf('/');
+      final bucket = s.substring(0, i);
+      final path = s.substring(i + 1);
+      u = await SupabaseService.instance.getSignedUrl(
+        bucket,
+        path,
+        expiresInSeconds: 600,
+      );
+    }
+    _ctl = VideoPlayerController.networkUrl(Uri.parse(u));
+    await _ctl.initialize();
+    if (mounted) setState(() => _ready = true);
   }
 
   @override

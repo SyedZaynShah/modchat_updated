@@ -12,15 +12,12 @@ class MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final align = isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
-    final bg = isMe
-        ? AppColors.sinopia.withValues(alpha: 0.18)
-        : Colors.white.withValues(alpha: 0.06);
+    final charcoal = const Color(0xFF1E1E1E);
+    final electric = const Color(0xFF006CFF);
+    final bg = charcoal.withValues(alpha: 0.9);
     final border = isMe
-        ? Border.all(
-            color: AppColors.sinopia.withValues(alpha: 0.6),
-            width: 1.2,
-          )
-        : Border.all(color: Colors.white.withValues(alpha: 0.2));
+        ? Border.all(color: electric.withValues(alpha: 0.8), width: 1.4)
+        : Border.all(color: Colors.white.withValues(alpha: 0.12), width: 1);
 
     return Column(
       crossAxisAlignment: align,
@@ -38,8 +35,8 @@ class MessageBubble extends StatelessWidget {
             border: border,
             boxShadow: [
               BoxShadow(
-                color: AppColors.sinopia.withValues(alpha: isMe ? 0.25 : 0.05),
-                blurRadius: 12,
+                color: electric.withValues(alpha: isMe ? 0.18 : 0.06),
+                blurRadius: 14,
                 spreadRadius: 1,
               ),
             ],

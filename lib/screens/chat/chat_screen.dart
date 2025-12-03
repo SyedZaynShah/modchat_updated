@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../services/supabase_service.dart';
 import '../../providers/chat_providers.dart';
 import '../../providers/user_providers.dart';
 import '../../theme/theme.dart';
@@ -56,6 +57,44 @@ class ChatScreen extends ConsumerWidget {
   }
 }
 
+class _Avatar extends StatelessWidget {
+  final String? url;
+  const _Avatar({this.url});
+
+  Future<ImageProvider?> _resolve(String? u) async {
+    if (u == null || u.isEmpty) return null;
+    if (u.startsWith('sb://')) {
+      final s = u.substring(5);
+      final i = s.indexOf('/');
+      final bucket = s.substring(0, i);
+      final path = s.substring(i + 1);
+      final signed = await SupabaseService.instance.getSignedUrl(
+        bucket,
+        path,
+        expiresInSeconds: 600,
+      );
+      return NetworkImage(signed);
+    }
+    return NetworkImage(u);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<ImageProvider?>(
+      future: _resolve(url),
+      builder: (context, snap) {
+        return CircleAvatar(
+          backgroundColor: AppColors.sinopia.withValues(alpha: 0.25),
+          backgroundImage: snap.data,
+          child: (snap.data != null)
+              ? null
+              : const Icon(Icons.person, color: Colors.white70),
+        );
+      },
+    );
+  }
+}
+
 class _Tile extends ConsumerWidget {
   final String chatId;
   final String peerId;
@@ -91,15 +130,7 @@ class _Tile extends ConsumerWidget {
                 style: const TextStyle(color: Colors.white54, fontSize: 12),
               )
             : null,
-        leading: CircleAvatar(
-          backgroundColor: AppColors.sinopia.withValues(alpha: 0.25),
-          backgroundImage: (u?.profileImageUrl?.isNotEmpty == true)
-              ? NetworkImage(u!.profileImageUrl!)
-              : null,
-          child: (u?.profileImageUrl?.isNotEmpty == true)
-              ? null
-              : const Icon(Icons.person, color: Colors.white70),
-        ),
+        leading: _Avatar(url: u?.profileImageUrl),
       ),
       loading: () => const ListTile(title: Text('...'), subtitle: Text('...')),
       error: (e, _) =>

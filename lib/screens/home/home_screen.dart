@@ -270,16 +270,19 @@ class _ProfileSheetState extends ConsumerState<_ProfileSheet> {
     try {
       final u = FirebaseAuth.instance.currentUser!;
       String? url;
+      String? bucket;
+      String? path;
       if (_avatar != null) {
-        final path =
-            'avatars/${u.uid}_${DateTime.now().millisecondsSinceEpoch}.png';
-        final uploaded = await StorageService().uploadBytes(
+        path = 'avatars/${u.uid}_${DateTime.now().millisecondsSinceEpoch}.png';
+        bucket = StorageService().profileBucket;
+        await StorageService().uploadBytes(
           data: _avatar!,
-          bucket: StorageService().profileBucket,
+          bucket: bucket,
           path: path,
           contentType: 'image/png',
         );
-        url = uploaded.publicUrl;
+        // Store sb:// reference for auto-signed resolution
+        url = 'sb://$bucket/$path';
       }
       final fs = FirestoreService();
       await fs.users.doc(u.uid).set({

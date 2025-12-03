@@ -9,6 +9,7 @@ import '../../theme/theme.dart';
 import '../../widgets/message_bubble.dart';
 import '../../widgets/input_field.dart';
 import '../../widgets/audio_recorder_widget.dart';
+import '../../services/supabase_service.dart';
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
   static const routeName = '/chat-detail';
@@ -42,7 +43,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     _scrollController.addListener(() {
       if (!_scrollController.hasClients) return;
       final pos = _scrollController.position;
-      final isNear = (pos.maxScrollExtent - pos.pixels) <= 200;
+      final isNear = (pos.maxScrollExtent - pos.pixels) <= 30;
       if (isNear != _nearBottom) {
         setState(() => _nearBottom = isNear);
       }
@@ -204,12 +205,13 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                   if (_ackSent) {
                     if (list.length > _lastCount && _nearBottom) {
                       ref.read(chatServiceProvider).markAllSeen(widget.chatId);
+                      // Only auto-scroll when we received new messages and are at bottom
+                      WidgetsBinding.instance.addPostFrameCallback(
+                        (_) => _maybeScrollToBottom(),
+                      );
                     }
                     _lastCount = list.length;
                   }
-                  WidgetsBinding.instance.addPostFrameCallback(
-                    (_) => _maybeScrollToBottom(),
-                  );
                   return ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.symmetric(
@@ -267,14 +269,31 @@ class _PeerTitle extends ConsumerWidget {
     return user.when(
       data: (u) => Row(
         children: [
-          CircleAvatar(
-            radius: 16,
-            backgroundImage: (u?.profileImageUrl?.isNotEmpty == true)
-                ? NetworkImage(u!.profileImageUrl!)
-                : null,
-            child: (u?.profileImageUrl?.isNotEmpty == true)
-                ? null
-                : const Icon(Icons.person, size: 18),
+          FutureBuilder<ImageProvider?>(
+            future: () async {
+              final url = u?.profileImageUrl;
+              if (url == null || url.isEmpty) return null;
+              if (url.startsWith('sb://')) {
+                final s = url.substring(5);
+                final i = s.indexOf('/');
+                final bucket = s.substring(0, i);
+                final path = s.substring(i + 1);
+                final signed = await SupabaseService.instance.getSignedUrl(
+                  bucket,
+                  path,
+                  expiresInSeconds: 600,
+                );
+                return NetworkImage(signed);
+              }
+              return NetworkImage(url);
+            }(),
+            builder: (context, snap) => CircleAvatar(
+              radius: 16,
+              backgroundImage: snap.data,
+              child: snap.data == null
+                  ? const Icon(Icons.person, size: 18)
+                  : null,
+            ),
           ),
           const SizedBox(width: 8),
           Text(

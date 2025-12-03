@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/message_model.dart';
@@ -47,7 +48,20 @@ class ChatService {
         .where('members', arrayContains: uid)
         .orderBy('lastTimestamp', descending: true)
         .snapshots()
-        .map((s) => s.docs);
+        .map((s) => s.docs)
+        .distinct((prev, next) {
+          if (identical(prev, next)) return true;
+          if (prev.length != next.length) return false;
+          for (var i = 0; i < prev.length; i++) {
+            final a = prev[i];
+            final b = next[i];
+            if (a.id != b.id) return false;
+            final at = a.data()['lastTimestamp'];
+            final bt = b.data()['lastTimestamp'];
+            if ('$at' != '$bt') return false;
+          }
+          return true;
+        });
   }
 
   Stream<List<MessageModel>> streamMessages(String chatId) {
@@ -68,9 +82,31 @@ class ChatService {
             final deletedFor = List<String>.from(
               (data['deletedFor'] as List?) ?? const [],
             );
-            return uid == null ? true : !deletedFor.contains(uid);
+            final deleteForMap = Map<String, dynamic>.from(
+              (data['deleteFor'] as Map?) ?? const {},
+            );
+            final hiddenByMap = uid == null
+                ? false
+                : (deleteForMap[uid] == true);
+            return uid == null
+                ? true
+                : (!deletedFor.contains(uid) && !hiddenByMap);
           });
           return docs.map((d) => MessageModel.fromMap(d.data(), d.id)).toList();
+        })
+        .distinct((prev, next) {
+          if (prev.length != next.length) return false;
+          for (var i = 0; i < prev.length; i++) {
+            final a = prev[i];
+            final b = next[i];
+            if (a.id != b.id) return false;
+            if (a.status != b.status) return false;
+            if (a.isSeen != b.isSeen) return false;
+            if (a.edited != b.edited) return false;
+            if ('${a.text}' != '${b.text}') return false;
+            if ('${a.mediaUrl}' != '${b.mediaUrl}') return false;
+          }
+          return true;
         });
   }
 
@@ -119,29 +155,41 @@ class ChatService {
     final ts = DateTime.now().millisecondsSinceEpoch;
     final ext = _extOf(fileName);
     final safe = _safeName(fileName);
-    final path = 'chatMedia/$chatId/$uid/${ts}${ext.isNotEmpty ? '.$ext' : ''}';
+    final path = 'chatMedia/$chatId/$uid/$ts${ext.isNotEmpty ? '.$ext' : ''}';
     final bucket = switch (type) {
       MessageType.audio => _storage.audioBucket,
       _ => _storage.mediaBucket,
     };
-    final uploaded = await _storage.uploadBytes(
-      data: bytes,
-      bucket: bucket,
-      path: path,
-      contentType: contentType,
-    );
+    // Retry upload once on transient SocketException
+    Future<void> doUpload() async {
+      await _storage.uploadBytes(
+        data: bytes,
+        bucket: bucket,
+        path: path,
+        contentType: contentType,
+      );
+    }
+
+    try {
+      await doUpload();
+    } on SocketException {
+      await Future.delayed(const Duration(milliseconds: 400));
+      await doUpload();
+    }
 
     final now = FieldValue.serverTimestamp();
     final mediaType = _mediaTypeFor(fileName, contentType, type);
+    // Store a stable reference in mediaUrl using an sb:// scheme to avoid expired links
+    final sbUrl = 'sb://$bucket/$path';
     await msgRef.set({
       'chatId': chatId,
       'senderId': uid,
       'receiverId': peerId,
       'text': null,
-      'mediaUrl': uploaded.publicUrl,
+      'mediaUrl': sbUrl,
       'fileName': safe,
       'mediaType': mediaType,
-      'mediaSize': uploaded.size,
+      'mediaSize': bytes.length,
       if (type == MessageType.audio && audioDurationMs != null)
         'audioDurationMs': audioDurationMs,
       'timestamp': now,
@@ -225,6 +273,7 @@ class ChatService {
     await ref.update({
       'visibleTo': FieldValue.arrayRemove([uid]),
       'deletedFor': FieldValue.arrayUnion([uid]), // backward-compat
+      'deleteFor.$uid': true, // compatibility map flag
     });
   }
 
@@ -238,6 +287,7 @@ class ChatService {
     await ref.update({
       'isDeleted': true,
       'isDeletedForAll': true,
+      'deletedForEveryone': true, // compatibility flag
       'messageType': 'deleted',
       'text': '',
       'mediaUrl': null,
@@ -255,17 +305,20 @@ class ChatService {
     if (lower.endsWith('.doc') ||
         lower.endsWith('.docx') ||
         contentType.contains('msword') ||
-        contentType.contains('officedocument.wordprocessingml'))
+        contentType.contains('officedocument.wordprocessingml')) {
       return 'doc';
+    }
     if (lower.endsWith('.ppt') ||
         lower.endsWith('.pptx') ||
-        contentType.contains('powerpoint'))
+        contentType.contains('powerpoint')) {
       return 'ppt';
+    }
     if (lower.endsWith('.zip') ||
         lower.endsWith('.rar') ||
         contentType.contains('zip') ||
-        contentType.contains('rar'))
+        contentType.contains('rar')) {
       return 'zip';
+    }
     return 'file';
   }
 
