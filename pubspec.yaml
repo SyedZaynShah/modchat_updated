@@ -44,7 +44,7 @@ dependencies:
   file_picker: ^10.3.7
   mime: ^1.0.5
   image_picker: ^1.1.2
-  record: ^5.0.4
+  record: ^5.1.1
   just_audio: ^0.10.5
   video_player: ^2.10.1
   pdfx: ^2.9.2
@@ -55,6 +55,9 @@ dependencies:
   intl: ^0.20.2
   http: ^1.6.0
   photo_view: ^0.15.0
+
+dependency_overrides:
+  record_linux: 0.8.0
 
 dev_dependencies:
   flutter_test:

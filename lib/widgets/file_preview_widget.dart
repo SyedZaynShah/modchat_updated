@@ -34,11 +34,15 @@ class _ImagePreview extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () {
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(
-          backgroundColor: Colors.black,
-          appBar: AppBar(),
-          body: PhotoView(imageProvider: NetworkImage(url)),
-        )));
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => Scaffold(
+              backgroundColor: Colors.black,
+              appBar: AppBar(),
+              body: PhotoView(imageProvider: NetworkImage(url)),
+            ),
+          ),
+        );
       },
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
@@ -64,22 +68,58 @@ class _VideoPreviewState extends State<_VideoPreview> {
     _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))
       ..initialize().then((_) => setState(() => _ready = true));
   }
+
   @override
-  void dispose() { _controller.dispose(); super.dispose(); }
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => _controller.value.isPlaying ? _controller.pause() : _controller.play(),
+      onTap: () => _controller.value.isPlaying
+          ? _controller.pause()
+          : _controller.play(),
       child: SizedBox(
         width: 260,
         height: 180,
-        child: _ready ? Stack(children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: VideoPlayer(_controller),
-          ),
-          const Align(alignment: Alignment.center, child: Icon(Icons.play_circle, size: 48, color: Colors.white70)),
-        ]) : const Center(child: CircularProgressIndicator()),
+        child: _ready
+            ? Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: VideoPlayer(_controller),
+                  ),
+                  const Align(
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.play_circle,
+                      size: 48,
+                      color: Colors.white70,
+                    ),
+                  ),
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => _VideoFullscreen(url: widget.url),
+                          ),
+                        );
+                      },
+                      child: const Icon(
+                        Icons.open_in_full,
+                        color: Colors.white70,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : const Center(child: CircularProgressIndicator()),
       ),
     );
   }
@@ -110,7 +150,9 @@ class _AudioInlineState extends State<_AudioInline> {
       await _player.setUrl(widget.url);
       _duration = _player.duration ?? Duration.zero;
       _player.positionStream.listen((p) => setState(() => _position = p));
-      _player.durationStream.listen((d) => setState(() => _duration = d ?? Duration.zero));
+      _player.durationStream.listen(
+        (d) => setState(() => _duration = d ?? Duration.zero),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -125,7 +167,11 @@ class _AudioInlineState extends State<_AudioInline> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const SizedBox(width: 220, height: 48, child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
+      return const SizedBox(
+        width: 220,
+        height: 48,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
     }
     final playing = _player.playing;
     return SizedBox(
@@ -142,11 +188,20 @@ class _AudioInlineState extends State<_AudioInline> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Slider(
-                  value: _position.inMilliseconds.clamp(0, _duration.inMilliseconds).toDouble(),
-                  max: _duration.inMilliseconds.toDouble().clamp(1, double.infinity),
-                  onChanged: (v) => _player.seek(Duration(milliseconds: v.toInt())),
+                  value: _position.inMilliseconds
+                      .clamp(0, _duration.inMilliseconds)
+                      .toDouble(),
+                  max: _duration.inMilliseconds.toDouble().clamp(
+                    1,
+                    double.infinity,
+                  ),
+                  onChanged: (v) =>
+                      _player.seek(Duration(milliseconds: v.toInt())),
                 ),
-                Text('${_format(_position)} / ${_format(_duration)}', style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                Text(
+                  '${_format(_position)} / ${_format(_duration)}',
+                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+                ),
               ],
             ),
           ),
@@ -169,11 +224,17 @@ class _FileTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      title: Text(url.split('/').last, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: Text(
+        url.split('/').last,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
       leading: const Icon(Icons.insert_drive_file, color: Colors.white70),
       trailing: const Icon(Icons.open_in_new, color: Colors.white70),
       onTap: () {
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => _PdfMaybe(url: url)));
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => _PdfMaybe(url: url)));
       },
     );
   }
@@ -189,16 +250,28 @@ class _PdfMaybe extends StatelessWidget {
         future: http.get(Uri.parse(url)),
         builder: (context, snap) {
           if (!snap.hasData) {
-            return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator()));
+            return const Scaffold(
+              backgroundColor: Colors.black,
+              body: Center(child: CircularProgressIndicator()),
+            );
           }
           if (snap.hasError || snap.data!.statusCode != 200) {
-            return Scaffold(backgroundColor: Colors.black, body: Center(child: Text('Failed to load PDF (${snap.data?.statusCode})')));
+            return Scaffold(
+              backgroundColor: Colors.black,
+              body: Center(
+                child: Text('Failed to load PDF (${snap.data?.statusCode})'),
+              ),
+            );
           }
           final bytes = snap.data!.bodyBytes;
           return Scaffold(
             backgroundColor: Colors.black,
             appBar: AppBar(),
-            body: PdfViewPinch(controller: PdfControllerPinch(document: PdfDocument.openData(bytes))),
+            body: PdfViewPinch(
+              controller: PdfControllerPinch(
+                document: PdfDocument.openData(bytes),
+              ),
+            ),
           );
         },
       );
@@ -206,7 +279,69 @@ class _PdfMaybe extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(),
-      body: Center(child: SelectableText(url, style: const TextStyle(color: Colors.white))),
+      body: Center(
+        child: SelectableText(url, style: const TextStyle(color: Colors.white)),
+      ),
+    );
+  }
+}
+
+class _VideoFullscreen extends StatefulWidget {
+  final String url;
+  const _VideoFullscreen({required this.url});
+  @override
+  State<_VideoFullscreen> createState() => _VideoFullscreenState();
+}
+
+class _VideoFullscreenState extends State<_VideoFullscreen> {
+  late VideoPlayerController _ctl;
+  bool _ready = false;
+  @override
+  void initState() {
+    super.initState();
+    _ctl = VideoPlayerController.networkUrl(Uri.parse(widget.url))
+      ..initialize().then((_) => setState(() => _ready = true));
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(),
+      body: Center(
+        child: _ready
+            ? AspectRatio(
+                aspectRatio: _ctl.value.aspectRatio,
+                child: Stack(
+                  children: [
+                    VideoPlayer(_ctl),
+                    Align(
+                      alignment: Alignment.center,
+                      child: IconButton(
+                        iconSize: 64,
+                        color: Colors.white70,
+                        icon: Icon(
+                          _ctl.value.isPlaying
+                              ? Icons.pause_circle
+                              : Icons.play_circle,
+                        ),
+                        onPressed: () => setState(
+                          () =>
+                              _ctl.value.isPlaying ? _ctl.pause() : _ctl.play(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : const CircularProgressIndicator(),
+      ),
     );
   }
 }

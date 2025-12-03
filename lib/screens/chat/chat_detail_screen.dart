@@ -29,6 +29,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   bool _ackSent = false;
   bool _nearBottom = true;
   bool _inputHasText = false;
+  int _lastCount = 0;
 
   @override
   void initState() {
@@ -201,8 +202,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               child: messages.when(
                 data: (list) {
                   if (_ackSent) {
-                    // mark seen when chat opened
-                    ref.read(chatServiceProvider).markAllSeen(widget.chatId);
+                    if (list.length > _lastCount && _nearBottom) {
+                      ref.read(chatServiceProvider).markAllSeen(widget.chatId);
+                    }
+                    _lastCount = list.length;
                   }
                   WidgetsBinding.instance.addPostFrameCallback(
                     (_) => _maybeScrollToBottom(),

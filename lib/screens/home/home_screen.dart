@@ -279,7 +279,7 @@ class _ProfileSheetState extends ConsumerState<_ProfileSheet> {
           path: path,
           contentType: 'image/png',
         );
-        url = uploaded.signedUrl;
+        url = uploaded.publicUrl;
       }
       final fs = FirestoreService();
       await fs.users.doc(u.uid).set({

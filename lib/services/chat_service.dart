@@ -59,6 +59,12 @@ class ChatService {
         .map((s) {
           final docs = s.docs.where((d) {
             final data = d.data();
+            final visibleTo = List<String>.from(
+              (data['visibleTo'] as List?) ?? const [],
+            );
+            if (visibleTo.isNotEmpty) {
+              return uid == null ? true : visibleTo.contains(uid);
+            }
             final deletedFor = List<String>.from(
               (data['deletedFor'] as List?) ?? const [],
             );
@@ -86,6 +92,8 @@ class ChatService {
       'timestamp': now,
       'isSeen': false,
       'status': 1,
+      'members': [uid, peerId],
+      'visibleTo': [uid, peerId],
       'deletedFor': <String>[],
       'edited': false,
       'isDeletedForAll': false,
@@ -108,7 +116,10 @@ class ChatService {
   }) async {
     final uid = _auth.currentUser!.uid;
     final msgRef = _fs.messages(chatId).doc();
-    final path = '$chatId/${msgRef.id}/$fileName';
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final ext = _extOf(fileName);
+    final safe = _safeName(fileName);
+    final path = 'chatMedia/$chatId/$uid/${ts}${ext.isNotEmpty ? '.$ext' : ''}';
     final bucket = switch (type) {
       MessageType.audio => _storage.audioBucket,
       _ => _storage.mediaBucket,
@@ -127,7 +138,8 @@ class ChatService {
       'senderId': uid,
       'receiverId': peerId,
       'text': null,
-      'mediaUrl': uploaded.signedUrl,
+      'mediaUrl': uploaded.publicUrl,
+      'fileName': safe,
       'mediaType': mediaType,
       'mediaSize': uploaded.size,
       if (type == MessageType.audio && audioDurationMs != null)
@@ -135,6 +147,8 @@ class ChatService {
       'timestamp': now,
       'isSeen': false,
       'status': 1,
+      'members': [uid, peerId],
+      'visibleTo': [uid, peerId],
       'deletedFor': <String>[],
       'edited': false,
       'isDeletedForAll': false,
@@ -209,7 +223,8 @@ class ChatService {
     final uid = _auth.currentUser!.uid;
     final ref = _fs.messages(chatId).doc(messageId);
     await ref.update({
-      'deletedFor': FieldValue.arrayUnion([uid]),
+      'visibleTo': FieldValue.arrayRemove([uid]),
+      'deletedFor': FieldValue.arrayUnion([uid]), // backward-compat
     });
   }
 
@@ -221,7 +236,12 @@ class ChatService {
     final snap = await ref.get();
     if (!snap.exists) return;
     await ref.update({
+      'isDeleted': true,
       'isDeletedForAll': true,
+      'messageType': 'deleted',
+      'text': '',
+      'mediaUrl': null,
+      'mediaType': null,
       'deletedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -247,5 +267,16 @@ class ChatService {
         contentType.contains('rar'))
       return 'zip';
     return 'file';
+  }
+
+  String _extOf(String name) {
+    final dot = name.lastIndexOf('.');
+    return (dot != -1 && dot < name.length - 1)
+        ? name.substring(dot + 1).toLowerCase()
+        : '';
+  }
+
+  String _safeName(String name) {
+    return name.replaceAll(RegExp(r"[^A-Za-z0-9._-]"), '_');
   }
 }

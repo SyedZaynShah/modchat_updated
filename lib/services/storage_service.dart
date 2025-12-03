@@ -4,12 +4,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class StorageUploadResult {
   final String path;
-  final String signedUrl;
+  final String publicUrl;
   final String contentType;
   final int size;
   StorageUploadResult({
     required this.path,
-    required this.signedUrl,
+    required this.publicUrl,
     required this.contentType,
     required this.size,
   });
@@ -21,11 +21,10 @@ class StorageService {
     required String bucket,
     required String path,
     required String contentType,
-    int expireInSeconds = 31536000, // 365 days
   }) async {
     final client = Supabase.instance.client;
-    final storage = client.storage.from(bucket);
-    await storage.uploadBinary(
+    final from = client.storage.from(bucket);
+    await from.uploadBinary(
       path,
       data,
       fileOptions: FileOptions(
@@ -34,10 +33,10 @@ class StorageService {
         upsert: true,
       ),
     );
-    final signed = await storage.createSignedUrl(path, expireInSeconds);
+    final pub = from.getPublicUrl(path);
     return StorageUploadResult(
       path: path,
-      signedUrl: signed,
+      publicUrl: pub,
       contentType: contentType,
       size: data.length,
     );
