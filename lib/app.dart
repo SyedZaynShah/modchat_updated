@@ -22,7 +22,7 @@ class App extends ConsumerWidget {
       theme: AppTheme.theme,
       builder: (context, child) {
         return DefaultTextStyle(
-          style: GoogleFonts.inter().copyWith(color: Colors.white),
+          style: GoogleFonts.inter(),
           child: child ?? const SizedBox.shrink(),
         );
       },
@@ -61,9 +61,29 @@ class AuthGate extends ConsumerWidget {
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            backgroundColor: Colors.black,
-            body: Center(child: CircularProgressIndicator()),
+          return Scaffold(
+            backgroundColor: AppColors.background,
+            body: Stack(
+              children: [
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.white,
+                          AppColors.sinopia.withValues(alpha: 0.03),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const Center(
+                  child: CircularProgressIndicator(color: AppColors.sinopia),
+                ),
+              ],
+            ),
           );
         }
 
@@ -75,9 +95,31 @@ class AuthGate extends ConsumerWidget {
           future: user.reload(),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Scaffold(
-                backgroundColor: Colors.black,
-                body: Center(child: CircularProgressIndicator()),
+              return Scaffold(
+                backgroundColor: AppColors.background,
+                body: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Colors.white,
+                              AppColors.sinopia.withValues(alpha: 0.03),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Center(
+                      child: CircularProgressIndicator(
+                        color: AppColors.sinopia,
+                      ),
+                    ),
+                  ],
+                ),
               );
             }
 
