@@ -18,6 +18,25 @@ class SupabaseService {
 
   SupabaseClient get _client => Supabase.instance.client;
 
+  ({String bucket, String path})? _parseSupabasePathFromUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      final segments = uri.pathSegments;
+      final idx = segments.indexOf('object');
+      if (idx != -1 && idx + 1 < segments.length) {
+        // Handles both .../object/public/<bucket>/<path> and .../object/sign/<bucket>/<path>
+        if (segments[idx + 1] == 'public' || segments[idx + 1] == 'sign') {
+          if (idx + 3 <= segments.length) {
+            final bucket = segments[idx + 2];
+            final path = segments.sublist(idx + 3).join('/');
+            return (bucket: bucket, path: path);
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<void> uploadBinary({
     required String bucket,
     required String path,
@@ -44,7 +63,7 @@ class SupabaseService {
   Future<String> getSignedUrl(
     String bucket,
     String path, {
-    int expiresInSeconds = 300,
+    int expiresInSeconds = 86400,
   }) async {
     final key = '$bucket/$path';
     final cached = _cache[key];
@@ -66,9 +85,31 @@ class SupabaseService {
     String? directUrl,
     String? bucket,
     String? path,
-    int expiresInSeconds = 300,
+    int expiresInSeconds = 86400,
   }) async {
-    if (directUrl != null && directUrl.isNotEmpty) return directUrl;
+    if (directUrl != null && directUrl.isNotEmpty) {
+      // sb://bucket/path
+      if (directUrl.startsWith('sb://')) {
+        final s = directUrl.substring(5);
+        final i = s.indexOf('/');
+        if (i > 0) {
+          final b = s.substring(0, i);
+          final p = s.substring(i + 1);
+          return getSignedUrl(b, p, expiresInSeconds: expiresInSeconds);
+        }
+      }
+      // http(s) Supabase storage URL (public or expired signed) -> re-sign
+      final parsed = _parseSupabasePathFromUrl(directUrl);
+      if (parsed != null) {
+        return getSignedUrl(
+          parsed.bucket,
+          parsed.path,
+          expiresInSeconds: expiresInSeconds,
+        );
+      }
+      // Any other URL: return as-is
+      return directUrl;
+    }
     if (bucket != null &&
         bucket.isNotEmpty &&
         path != null &&

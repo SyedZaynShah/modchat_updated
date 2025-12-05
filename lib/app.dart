@@ -9,6 +9,7 @@ import 'screens/auth/signup_screen.dart';
 import 'screens/auth/verify_email_screen.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/chat/chat_detail_screen.dart';
+import 'ui/splash/splash_screen.dart';
 
 class App extends ConsumerWidget {
   const App({super.key});
@@ -25,6 +26,8 @@ class App extends ConsumerWidget {
           child: child ?? const SizedBox.shrink(),
         );
       },
+      home: const ModChatSplashScreen(),
+      routes: {"/home": (context) => const AuthGate()},
       onGenerateRoute: (settings) {
         if (settings.name == ChatDetailScreen.routeName) {
           final args = settings.arguments as Map<String, dynamic>;

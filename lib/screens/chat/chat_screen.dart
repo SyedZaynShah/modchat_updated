@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../services/supabase_service.dart';
+import '../../services/storage_service.dart';
 import '../../providers/chat_providers.dart';
 import '../../providers/user_providers.dart';
 import '../../theme/theme.dart';
@@ -72,6 +73,13 @@ class _Avatar extends StatelessWidget {
         bucket,
         path,
         expiresInSeconds: 600,
+      );
+      return NetworkImage(signed);
+    }
+    if (!u.contains('://')) {
+      final signed = await SupabaseService.instance.resolveUrl(
+        bucket: StorageService().profileBucket,
+        path: u,
       );
       return NetworkImage(signed);
     }

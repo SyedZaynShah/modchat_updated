@@ -281,8 +281,8 @@ class _ProfileSheetState extends ConsumerState<_ProfileSheet> {
           path: path,
           contentType: 'image/png',
         );
-        // Store sb:// reference for auto-signed resolution
-        url = 'sb://$bucket/$path';
+        // Store only storage path (no scheme)
+        url = path;
       }
       final fs = FirestoreService();
       await fs.users.doc(u.uid).set({

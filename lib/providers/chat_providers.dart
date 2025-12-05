@@ -27,3 +27,17 @@ final messagesProvider = StreamProvider.family<List<MessageModel>, String>((
   final service = ref.watch(chatServiceProvider);
   return service.streamMessages(chatId);
 });
+
+final hidesProvider = StreamProvider.family<Set<String>, String>((ref, chatId) {
+  ref.keepAlive();
+  final uid = ref.watch(currentUserProvider)?.uid;
+  if (uid == null) return const Stream.empty();
+  final fs = ref.watch(firestoreServiceProvider);
+  return fs.users.doc(uid).snapshots().map((snap) {
+    if (!snap.exists) return <String>{};
+    final data = snap.data();
+    final hidesMap = (data?['hides'] as Map?) ?? const {};
+    final list = List<String>.from((hidesMap[chatId] as List?) ?? const []);
+    return list.toSet();
+  });
+});

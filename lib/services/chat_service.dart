@@ -154,7 +154,6 @@ class ChatService {
     final msgRef = _fs.messages(chatId).doc();
     final ts = DateTime.now().millisecondsSinceEpoch;
     final ext = _extOf(fileName);
-    final safe = _safeName(fileName);
     final path = 'chatMedia/$chatId/$uid/$ts${ext.isNotEmpty ? '.$ext' : ''}';
     final bucket = switch (type) {
       MessageType.audio => _storage.audioBucket,
@@ -179,15 +178,14 @@ class ChatService {
 
     final now = FieldValue.serverTimestamp();
     final mediaType = _mediaTypeFor(fileName, contentType, type);
-    // Store a stable reference in mediaUrl using an sb:// scheme to avoid expired links
-    final sbUrl = 'sb://$bucket/$path';
     await msgRef.set({
       'chatId': chatId,
       'senderId': uid,
       'receiverId': peerId,
       'text': null,
-      'mediaUrl': sbUrl,
-      'fileName': safe,
+      // Store only storage path (no scheme)
+      'mediaUrl': path,
+      'fileName': ext.isNotEmpty ? '$ts.$ext' : '$ts',
       'mediaType': mediaType,
       'mediaSize': bytes.length,
       if (type == MessageType.audio && audioDurationMs != null)
@@ -269,12 +267,18 @@ class ChatService {
     required String messageId,
   }) async {
     final uid = _auth.currentUser!.uid;
-    final ref = _fs.messages(chatId).doc(messageId);
-    await ref.update({
-      'visibleTo': FieldValue.arrayRemove([uid]),
-      'deletedFor': FieldValue.arrayUnion([uid]), // backward-compat
-      'deleteFor.$uid': true, // compatibility map flag
-    });
+    final userDoc = _fs.users.doc(uid);
+    try {
+      await userDoc.update({
+        'hides.$chatId': FieldValue.arrayUnion([messageId]),
+      });
+    } catch (_) {
+      await userDoc.set({
+        'hides': {
+          chatId: [messageId],
+        },
+      }, SetOptions(merge: true));
+    }
   }
 
   Future<void> deleteForEveryone({
@@ -284,6 +288,11 @@ class ChatService {
     final ref = _fs.messages(chatId).doc(messageId);
     final snap = await ref.get();
     if (!snap.exists) return;
+    final data = snap.data() as Map<String, dynamic>;
+    final uid = _auth.currentUser!.uid;
+    if (data['senderId'] != uid) {
+      throw Exception('Not authorized to delete this message for everyone');
+    }
     await ref.update({
       'isDeleted': true,
       'isDeletedForAll': true,
@@ -327,9 +336,5 @@ class ChatService {
     return (dot != -1 && dot < name.length - 1)
         ? name.substring(dot + 1).toLowerCase()
         : '';
-  }
-
-  String _safeName(String name) {
-    return name.replaceAll(RegExp(r"[^A-Za-z0-9._-]"), '_');
   }
 }

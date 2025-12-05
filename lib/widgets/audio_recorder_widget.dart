@@ -39,13 +39,13 @@ class _AudioRecorderWidgetState extends State<AudioRecorderWidget> {
     try {
       final dir = await getTemporaryDirectory();
       _lastPath =
-          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.wav';
       _start = DateTime.now();
       await _rec.start(
         RecordConfig(
-          encoder: AudioEncoder.aacLc,
-          bitRate: 128000,
+          encoder: AudioEncoder.wav,
           sampleRate: 44100,
+          numChannels: 1,
         ),
         path: _lastPath!,
       );
@@ -117,8 +117,8 @@ class _AudioRecorderWidgetState extends State<AudioRecorderWidget> {
       final bytes = await File(path).readAsBytes();
       await widget.onSendAudio(
         bytes,
-        'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
-        'audio/m4a',
+        'voice_${DateTime.now().millisecondsSinceEpoch}.wav',
+        'audio/wav',
         MessageType.audio,
         durationMs: duration,
       );
@@ -150,7 +150,7 @@ class _AudioRecorderWidgetState extends State<AudioRecorderWidget> {
           onLongPressEnd: (_) => _stopRecAndConfirm(),
           child: Icon(
             _recording ? Icons.mic : Icons.mic,
-            color: _recording ? Colors.redAccent : Colors.white70,
+            color: _recording ? Colors.redAccent : Color(0xFF1E1E1E),
             size: 24,
           ),
         ),
@@ -163,7 +163,7 @@ class _AudioRecorderWidgetState extends State<AudioRecorderWidget> {
               borderRadius: BorderRadius.circular(8),
               child: Stack(
                 children: [
-                  Container(color: Colors.white24),
+                  Container(color: Colors.black12),
                   Align(
                     alignment: Alignment.centerLeft,
                     child: FractionallySizedBox(
@@ -180,7 +180,7 @@ class _AudioRecorderWidgetState extends State<AudioRecorderWidget> {
           const SizedBox(width: 6),
           Text(
             _fmt(elapsed),
-            style: const TextStyle(fontSize: 12, color: Colors.white70),
+            style: const TextStyle(fontSize: 12, color: Color(0xFF1E1E1E)),
           ),
         ],
       ],

@@ -15,4 +15,9 @@ class FirestoreService {
       _db.collection('calls');
   CollectionReference<Map<String, dynamic>> messages(String chatId) =>
       dmChats.doc(chatId).collection('messages');
+
+  DocumentReference<Map<String, dynamic>> userHidesDoc(
+    String uid,
+    String chatId,
+  ) => users.doc(uid).collection('hides').doc(chatId);
 }

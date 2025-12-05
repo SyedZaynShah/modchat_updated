@@ -65,7 +65,10 @@ class MessageBubble extends StatelessWidget {
     switch (message.messageType) {
       case MessageType.text:
         final t = (message.text ?? '') + (message.edited ? ' (edited)' : '');
-        return Text(t, style: const TextStyle(fontSize: 16));
+        return Text(
+          t,
+          style: const TextStyle(fontSize: 16, color: Colors.white),
+        );
       case MessageType.image:
       case MessageType.video:
       case MessageType.file:

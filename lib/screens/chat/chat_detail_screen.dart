@@ -8,8 +8,8 @@ import '../../providers/user_providers.dart';
 import '../../theme/theme.dart';
 import '../../widgets/message_bubble.dart';
 import '../../widgets/input_field.dart';
-import '../../widgets/audio_recorder_widget.dart';
 import '../../services/supabase_service.dart';
+import '../../services/storage_service.dart';
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
   static const routeName = '/chat-detail';
@@ -29,7 +29,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   final _scrollController = ScrollController();
   bool _ackSent = false;
   bool _nearBottom = true;
-  bool _inputHasText = false;
+  // typing state no longer used for VN visibility (handled inside InputField)
   int _lastCount = 0;
 
   @override
@@ -97,11 +97,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     });
   }
 
-  void _onTypingChanged(bool hasText) {
-    if (_inputHasText != hasText) {
-      setState(() => _inputHasText = hasText);
-    }
-  }
+  void _onTypingChanged(bool hasText) {}
 
   Future<void> _onMessageLongPress(
     BuildContext context,
@@ -192,6 +188,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   Widget build(BuildContext context) {
     final me = FirebaseAuth.instance.currentUser!.uid;
     final messages = ref.watch(messagesProvider(widget.chatId));
+    final hides = ref.watch(hidesProvider(widget.chatId));
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -202,15 +199,22 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             Expanded(
               child: messages.when(
                 data: (list) {
+                  final hidden = hides.maybeWhen(
+                    data: (s) => s,
+                    orElse: () => <String>{},
+                  );
+                  final filtered = list
+                      .where((m) => !hidden.contains(m.id))
+                      .toList();
                   if (_ackSent) {
-                    if (list.length > _lastCount && _nearBottom) {
+                    if (filtered.length > _lastCount && _nearBottom) {
                       ref.read(chatServiceProvider).markAllSeen(widget.chatId);
                       // Only auto-scroll when we received new messages and are at bottom
                       WidgetsBinding.instance.addPostFrameCallback(
                         (_) => _maybeScrollToBottom(),
                       );
                     }
-                    _lastCount = list.length;
+                    _lastCount = filtered.length;
                   }
                   return ListView.builder(
                     controller: _scrollController,
@@ -218,9 +222,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                       horizontal: 12,
                       vertical: 12,
                     ),
-                    itemCount: list.length,
+                    itemCount: filtered.length,
                     itemBuilder: (context, index) {
-                      final m = list[index];
+                      final m = filtered[index];
                       final isMe = m.senderId == me;
                       return GestureDetector(
                         key: ValueKey(m.id),
@@ -240,18 +244,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 error: (e, _) => Center(child: Text('Error: $e')),
               ),
             ),
-            Row(
-              children: [
-                Expanded(
-                  child: InputField(
-                    onSend: _sendText,
-                    onSendMedia: _sendMedia,
-                    onTypingChanged: _onTypingChanged,
-                  ),
-                ),
-                if (!_inputHasText)
-                  AudioRecorderWidget(onSendAudio: _sendMedia),
-              ],
+            InputField(
+              onSend: _sendText,
+              onSendMedia: _sendMedia,
+              onTypingChanged: _onTypingChanged,
             ),
           ],
         ),
@@ -281,7 +277,14 @@ class _PeerTitle extends ConsumerWidget {
                 final signed = await SupabaseService.instance.getSignedUrl(
                   bucket,
                   path,
-                  expiresInSeconds: 600,
+                  expiresInSeconds: 86400,
+                );
+                return NetworkImage(signed);
+              }
+              if (!url.contains('://')) {
+                final signed = await SupabaseService.instance.resolveUrl(
+                  bucket: StorageService().profileBucket,
+                  path: url,
                 );
                 return NetworkImage(signed);
               }

@@ -6,6 +6,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:photo_view/photo_view.dart';
 import '../models/message_model.dart';
 import '../services/supabase_service.dart';
+import '../services/storage_service.dart';
 
 class FilePreviewWidget extends StatelessWidget {
   final MessageModel message;
@@ -16,34 +17,30 @@ class FilePreviewWidget extends StatelessWidget {
     final url = message.mediaUrl ?? '';
     switch (message.messageType) {
       case MessageType.image:
-        return _ImagePreview(url: url);
+        return _ImagePreview(url: url, type: message.messageType);
       case MessageType.video:
-        return _VideoPreview(url: url);
+        return _VideoPreview(url: url, type: message.messageType);
       case MessageType.audio:
-        return _AudioInline(url: url);
+        return _AudioInline(url: url, type: message.messageType);
       case MessageType.file:
       default:
-        return _FileTile(url: url);
+        return _FileTile(url: url, type: message.messageType);
     }
   }
 }
 
 class _ImagePreview extends StatelessWidget {
   final String url;
-  const _ImagePreview({required this.url});
+  final MessageType type;
+  const _ImagePreview({required this.url, required this.type});
   Future<String> _resolve(String u) async {
-    if (u.startsWith('sb://')) {
-      final s = u.substring(5);
-      final i = s.indexOf('/');
-      final bucket = s.substring(0, i);
-      final path = s.substring(i + 1);
-      return SupabaseService.instance.getSignedUrl(
-        bucket,
-        path,
-        expiresInSeconds: 600,
-      );
+    if (u.contains('://')) {
+      return SupabaseService.instance.resolveUrl(directUrl: u);
     }
-    return u;
+    final bucket = type == MessageType.audio
+        ? StorageService().audioBucket
+        : StorageService().mediaBucket;
+    return SupabaseService.instance.resolveUrl(bucket: bucket, path: u);
   }
 
   @override
@@ -88,25 +85,24 @@ class _ImagePreview extends StatelessWidget {
 
 class _VideoPreview extends StatefulWidget {
   final String url;
-  const _VideoPreview({required this.url});
+  final MessageType type;
+  const _VideoPreview({required this.url, required this.type});
   @override
   State<_VideoPreview> createState() => _VideoPreviewState();
 }
 
 class _VideoPreviewState extends State<_VideoPreview> {
   Future<VideoPlayerController> _initController() async {
-    String u = widget.url;
-    if (u.startsWith('sb://')) {
-      final s = u.substring(5);
-      final i = s.indexOf('/');
-      final bucket = s.substring(0, i);
-      final path = s.substring(i + 1);
-      u = await SupabaseService.instance.getSignedUrl(
-        bucket,
-        path,
-        expiresInSeconds: 600,
-      );
-    }
+    final u = await (() async {
+      final v = widget.url;
+      if (v.contains('://')) {
+        return SupabaseService.instance.resolveUrl(directUrl: v);
+      }
+      final bucket = widget.type == MessageType.audio
+          ? StorageService().audioBucket
+          : StorageService().mediaBucket;
+      return SupabaseService.instance.resolveUrl(bucket: bucket, path: v);
+    })();
     final ctl = VideoPlayerController.networkUrl(Uri.parse(u));
     await ctl.initialize();
     return ctl;
@@ -153,7 +149,10 @@ class _VideoPreviewState extends State<_VideoPreview> {
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => _VideoFullscreen(url: widget.url),
+                          builder: (_) => _VideoFullscreen(
+                            url: widget.url,
+                            type: widget.type,
+                          ),
                         ),
                       );
                     },
@@ -175,7 +174,8 @@ class _VideoPreviewState extends State<_VideoPreview> {
 
 class _AudioInline extends StatefulWidget {
   final String url;
-  const _AudioInline({required this.url});
+  final MessageType type;
+  const _AudioInline({required this.url, required this.type});
   @override
   State<_AudioInline> createState() => _AudioInlineState();
 }
@@ -195,18 +195,15 @@ class _AudioInlineState extends State<_AudioInline> {
 
   Future<void> _init() async {
     try {
-      var u = widget.url;
-      if (u.startsWith('sb://')) {
-        final s = u.substring(5);
-        final i = s.indexOf('/');
-        final bucket = s.substring(0, i);
-        final path = s.substring(i + 1);
-        u = await SupabaseService.instance.getSignedUrl(
-          bucket,
-          path,
-          expiresInSeconds: 600,
-        );
-      }
+      final v = widget.url;
+      final u = v.contains('://')
+          ? await SupabaseService.instance.resolveUrl(directUrl: v)
+          : await SupabaseService.instance.resolveUrl(
+              bucket: widget.type == MessageType.audio
+                  ? StorageService().audioBucket
+                  : StorageService().mediaBucket,
+              path: v,
+            );
       await _player.setUrl(u);
       _duration = _player.duration ?? Duration.zero;
       _player.positionStream.listen((p) => setState(() => _position = p));
@@ -279,23 +276,19 @@ class _AudioInlineState extends State<_AudioInline> {
 
 class _FileTile extends StatelessWidget {
   final String url;
-  const _FileTile({required this.url});
+  final MessageType type;
+  const _FileTile({required this.url, required this.type});
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<String>(
       future: () async {
-        if (url.startsWith('sb://')) {
-          final s = url.substring(5);
-          final i = s.indexOf('/');
-          final bucket = s.substring(0, i);
-          final path = s.substring(i + 1);
-          return SupabaseService.instance.getSignedUrl(
-            bucket,
-            path,
-            expiresInSeconds: 600,
-          );
+        if (url.contains('://')) {
+          return SupabaseService.instance.resolveUrl(directUrl: url);
         }
-        return url;
+        final bucket = type == MessageType.audio
+            ? StorageService().audioBucket
+            : StorageService().mediaBucket;
+        return SupabaseService.instance.resolveUrl(bucket: bucket, path: url);
       }(),
       builder: (context, snap) {
         final name = url.split('/').last;
@@ -364,7 +357,8 @@ class _PdfMaybe extends StatelessWidget {
 
 class _VideoFullscreen extends StatefulWidget {
   final String url;
-  const _VideoFullscreen({required this.url});
+  final MessageType type;
+  const _VideoFullscreen({required this.url, required this.type});
   @override
   State<_VideoFullscreen> createState() => _VideoFullscreenState();
 }
@@ -379,18 +373,15 @@ class _VideoFullscreenState extends State<_VideoFullscreen> {
   }
 
   Future<void> _init() async {
-    String u = widget.url;
-    if (u.startsWith('sb://')) {
-      final s = u.substring(5);
-      final i = s.indexOf('/');
-      final bucket = s.substring(0, i);
-      final path = s.substring(i + 1);
-      u = await SupabaseService.instance.getSignedUrl(
-        bucket,
-        path,
-        expiresInSeconds: 600,
-      );
-    }
+    final v = widget.url;
+    final u = v.contains('://')
+        ? await SupabaseService.instance.resolveUrl(directUrl: v)
+        : await SupabaseService.instance.resolveUrl(
+            bucket: widget.type == MessageType.audio
+                ? StorageService().audioBucket
+                : StorageService().mediaBucket,
+            path: v,
+          );
     _ctl = VideoPlayerController.networkUrl(Uri.parse(u));
     await _ctl.initialize();
     if (mounted) setState(() => _ready = true);
