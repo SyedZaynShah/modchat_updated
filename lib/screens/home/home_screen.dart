@@ -25,12 +25,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _nameController = TextEditingController();
   final _aboutController = TextEditingController();
   bool _starting = false;
+  late final PageController _pageController;
+  int _currentIndex = 0;
+  final List<String> _titles = const [
+    'Chats',
+    'Updates',
+    'Communities',
+    'Calls',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: 0);
+  }
 
   @override
   void dispose() {
     _emailController.dispose();
     _nameController.dispose();
     _aboutController.dispose();
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -87,7 +102,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('ModChat'),
+        title: Text(
+          _titles[_currentIndex],
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+            color: AppColors.navy,
+          ),
+        ),
         actions: [
           IconButton(
             onPressed: _openProfile,
@@ -99,74 +120,219 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: PageView(
+        controller: _pageController,
+        physics: const BouncingScrollPhysics(),
+        onPageChanged: (i) => setState(() => _currentIndex = i),
         children: [
-          Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _emailController,
-                    decoration: const InputDecoration(
-                      hintText: 'Start chat by email',
+          // Chats
+          Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _emailController,
+                        decoration: const InputDecoration(
+                          hintText: 'Start chat by email',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GlassButton(
+                      onPressed: _starting ? null : _startChat,
+                      child: _starting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.chat_bubble_outline),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: chatList.when(
+                  data: (docs) {
+                    if (docs.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'No chats yet',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                      );
+                    }
+                    return ListView.separated(
+                      itemCount: docs.length,
+                      separatorBuilder: (context, index) => Center(
+                        child: FractionallySizedBox(
+                          widthFactor: 0.68,
+                          child: Container(
+                            height: 0.5,
+                            margin: const EdgeInsets.symmetric(vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.sinopia.withOpacity(0.22),
+                              borderRadius: BorderRadius.circular(1),
+                            ),
+                          ),
+                        ),
+                      ),
+                      itemBuilder: (context, index) {
+                        final d = docs[index];
+                        final data = d.data();
+                        final members = List<String>.from(
+                          data['members'] as List,
+                        );
+                        final me = FirebaseAuth.instance.currentUser!.uid;
+                        final peerId = members.firstWhere(
+                          (m) => m != me,
+                          orElse: () => me,
+                        );
+                        final last = data['lastMessage'] as String?;
+                        final ts = (data['lastTimestamp'] as Timestamp?)
+                            ?.toDate();
+                        return _ChatListTile(
+                          chatId: d.id,
+                          peerId: peerId,
+                          last: last,
+                          time: ts,
+                        );
+                      },
+                    );
+                  },
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (e, _) => Center(
+                    child: Text(
+                      'Error: $e',
+                      style: const TextStyle(color: Colors.redAccent),
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                GlassButton(
-                  onPressed: _starting ? null : _startChat,
-                  child: _starting
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.chat_bubble_outline),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          Expanded(
-            child: chatList.when(
-              data: (docs) {
-                if (docs.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      'No chats yet',
-                      style: TextStyle(color: Colors.white70),
-                    ),
-                  );
-                }
-                return ListView.builder(
-                  itemCount: docs.length,
-                  itemBuilder: (context, index) {
-                    final d = docs[index];
-                    final data = d.data();
-                    final members = List<String>.from(data['members'] as List);
-                    final me = FirebaseAuth.instance.currentUser!.uid;
-                    final peerId = members.firstWhere(
-                      (m) => m != me,
-                      orElse: () => me,
-                    );
-                    final last = data['lastMessage'] as String?;
-                    final ts = (data['lastTimestamp'] as Timestamp?)?.toDate();
-                    return _ChatListTile(
-                      chatId: d.id,
-                      peerId: peerId,
-                      last: last,
-                      time: ts,
-                    );
-                  },
-                );
-              },
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(
-                child: Text(
-                  'Error: $e',
-                  style: const TextStyle(color: Colors.redAccent),
+          // Updates placeholder
+          _buildPlaceholder(icon: Icons.update, text: 'No updates yet'),
+          // Communities placeholder
+          _buildPlaceholder(
+            icon: Icons.groups_rounded,
+            text: 'No communities yet',
+          ),
+          // Calls placeholder
+          _buildPlaceholder(icon: Icons.call_rounded, text: 'No calls yet'),
+        ],
+      ),
+      bottomNavigationBar: _buildBottomNav(),
+    );
+  }
+}
+
+extension on _HomeScreenState {
+  Widget _buildBottomNav() {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(16),
+          topRight: Radius.circular(16),
+        ),
+        border: const Border(
+          top: BorderSide(color: AppColors.sinopia, width: 1.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.navy.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.only(top: 8, bottom: 10),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            _navItem(icon: Icons.chat_bubble_rounded, label: 'Chats', index: 0),
+            _navItem(icon: Icons.update, label: 'Updates', index: 1),
+            _navItem(
+              icon: Icons.groups_rounded,
+              label: 'Communities',
+              index: 2,
+            ),
+            _navItem(icon: Icons.call_rounded, label: 'Calls', index: 3),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _navItem({
+    required IconData icon,
+    required String label,
+    required int index,
+  }) {
+    final selected = _currentIndex == index;
+    return Expanded(
+      child: InkWell(
+        onTap: () {
+          setState(() => _currentIndex = index);
+          _pageController.animateToPage(
+            index,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: AppColors.navy, size: 22),
+              const SizedBox(height: 4),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                height: 2,
+                width: 24,
+                decoration: BoxDecoration(
+                  color: selected ? AppColors.sinopia : Colors.transparent,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.navy,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder({required IconData icon, required String text}) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 64, color: AppColors.navy.withOpacity(0.6)),
+          const SizedBox(height: 12),
+          Text(
+            text,
+            style: const TextStyle(
+              color: AppColors.navy,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -192,32 +358,55 @@ class _ChatListTile extends ConsumerWidget {
     final user = ref.watch(userDocProvider(peerId));
     return user.when(
       data: (u) {
-        return ListTile(
-          onTap: () => Navigator.pushNamed(
-            context,
-            ChatDetailScreen.routeName,
-            arguments: {'chatId': chatId, 'peerId': peerId},
-          ),
-          title: Text(u?.name.isNotEmpty == true ? u!.name : peerId),
-          subtitle: Text(
-            last ?? '',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          trailing: time != null
-              ? Text(
-                  _formatTime(time!),
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
-                )
-              : null,
-          leading: CircleAvatar(
-            backgroundColor: AppColors.sinopia.withValues(alpha: 0.25),
-            backgroundImage: (u?.profileImageUrl?.isNotEmpty == true)
-                ? NetworkImage(u!.profileImageUrl!)
-                : null,
-            child: (u?.profileImageUrl?.isNotEmpty == true)
-                ? null
-                : const Icon(Icons.person, color: Colors.white70),
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => Navigator.pushNamed(
+              context,
+              ChatDetailScreen.routeName,
+              arguments: {'chatId': chatId, 'peerId': peerId},
+            ),
+            splashColor: AppColors.navy.withOpacity(0.08),
+            highlightColor: AppColors.navy.withOpacity(0.06),
+            child: ListTile(
+              dense: true,
+              visualDensity: const VisualDensity(vertical: -2),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 2,
+              ),
+              title: Text(
+                u?.name.isNotEmpty == true ? u!.name : peerId,
+                style: const TextStyle(
+                  color: AppColors.navy,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                ),
+              ),
+              subtitle: Text(
+                last ?? '',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: time != null
+                  ? Text(
+                      _formatTime(time!),
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    )
+                  : null,
+              leading: CircleAvatar(
+                backgroundColor: AppColors.sinopia.withValues(alpha: 0.25),
+                backgroundImage: (u?.profileImageUrl?.isNotEmpty == true)
+                    ? NetworkImage(u!.profileImageUrl!)
+                    : null,
+                child: (u?.profileImageUrl?.isNotEmpty == true)
+                    ? null
+                    : const Icon(Icons.person, color: Colors.white70),
+              ),
+            ),
           ),
         );
       },
