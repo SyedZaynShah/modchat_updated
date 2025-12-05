@@ -12,6 +12,7 @@ import '../../services/storage_service.dart';
 import '../../theme/theme.dart';
 import '../../widgets/glass_button.dart';
 import '../chat/chat_detail_screen.dart';
+import 'new_chat_screen.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -24,6 +25,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _emailController = TextEditingController();
   final _nameController = TextEditingController();
   final _aboutController = TextEditingController();
+  final _chatSearchController = TextEditingController();
   bool _starting = false;
   late final PageController _pageController;
   int _currentIndex = 0;
@@ -45,6 +47,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     _emailController.dispose();
     _nameController.dispose();
     _aboutController.dispose();
+    _chatSearchController.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -130,28 +133,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.all(12.0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _emailController,
-                        decoration: const InputDecoration(
-                          hintText: 'Start chat by email',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    GlassButton(
-                      onPressed: _starting ? null : _startChat,
-                      child: _starting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.chat_bubble_outline),
-                    ),
-                  ],
+                child: TextField(
+                  controller: _chatSearchController,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    hintText: 'Search chats',
+                  ),
                 ),
               ),
               Expanded(
@@ -165,8 +153,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         ),
                       );
                     }
+                    final q = _chatSearchController.text.trim().toLowerCase();
+                    final filtered = q.isEmpty
+                        ? docs
+                        : docs.where((d) {
+                            final data = d.data();
+                            final members = List<String>.from(
+                              data['members'] as List,
+                            );
+                            final me = FirebaseAuth.instance.currentUser!.uid;
+                            final peerId = members.firstWhere(
+                              (m) => m != me,
+                              orElse: () => me,
+                            );
+                            final last = (data['lastMessage'] as String?) ?? '';
+                            return peerId.toLowerCase().contains(q) ||
+                                last.toLowerCase().contains(q);
+                          }).toList();
                     return ListView.separated(
-                      itemCount: docs.length,
+                      itemCount: filtered.length,
                       separatorBuilder: (context, index) => Center(
                         child: FractionallySizedBox(
                           widthFactor: 0.68,
@@ -181,7 +186,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         ),
                       ),
                       itemBuilder: (context, index) {
-                        final d = docs[index];
+                        final d = filtered[index];
                         final data = d.data();
                         final members = List<String>.from(
                           data['members'] as List,
@@ -199,6 +204,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           peerId: peerId,
                           last: last,
                           time: ts,
+                          query: q,
                         );
                       },
                     );
@@ -225,6 +231,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           // Calls placeholder
           _buildPlaceholder(icon: Icons.call_rounded, text: 'No calls yet'),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: AppColors.navy,
+        foregroundColor: AppColors.white,
+        child: const Icon(Icons.add),
+        onPressed: () {
+          Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => const NewChatScreen()));
+        },
       ),
       bottomNavigationBar: _buildBottomNav(),
     );
@@ -346,11 +362,13 @@ class _ChatListTile extends ConsumerWidget {
   final String peerId;
   final String? last;
   final DateTime? time;
+  final String? query;
   const _ChatListTile({
     required this.chatId,
     required this.peerId,
     this.last,
     this.time,
+    this.query,
   });
 
   @override
@@ -358,6 +376,19 @@ class _ChatListTile extends ConsumerWidget {
     final user = ref.watch(userDocProvider(peerId));
     return user.when(
       data: (u) {
+        final q = (query ?? '').trim().toLowerCase();
+        if (q.isNotEmpty) {
+          final name = (u?.name ?? '').toLowerCase();
+          final email = (u?.email ?? '').toLowerCase();
+          final id = peerId.toLowerCase();
+          final lastMsg = (last ?? '').toLowerCase();
+          final matched =
+              name.contains(q) ||
+              email.contains(q) ||
+              id.contains(q) ||
+              lastMsg.contains(q);
+          if (!matched) return const SizedBox.shrink();
+        }
         return Material(
           color: Colors.transparent,
           child: InkWell(
