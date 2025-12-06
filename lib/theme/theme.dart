@@ -32,21 +32,18 @@ class AppTheme {
       textTheme: GoogleFonts.interTextTheme(
         base.textTheme,
       ).apply(bodyColor: AppColors.navy, displayColor: AppColors.navy),
-      inputDecorationTheme: InputDecorationTheme(
+      inputDecorationTheme: const InputDecorationTheme(
         filled: true,
         fillColor: Colors.white70,
-        labelStyle: const TextStyle(color: AppColors.navy, fontSize: 14),
+        labelStyle: TextStyle(color: AppColors.navy, fontSize: 14),
         hintStyle: TextStyle(
-          color: AppColors.navy.withValues(alpha: 0.4),
+          color: AppColors.navy, // use opacity at call sites if needed
           fontSize: 14,
         ),
         prefixIconColor: AppColors.navy,
-        border: _inputBorder,
-        enabledBorder: _inputBorder,
-        focusedBorder: OutlineInputBorder(
-          borderSide: const BorderSide(color: AppColors.sinopia, width: 1.5),
-          borderRadius: BorderRadius.circular(14),
-        ),
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ButtonStyle(
@@ -86,11 +83,6 @@ class AppTheme {
       ),
     );
   }
-
-  static OutlineInputBorder get _inputBorder => OutlineInputBorder(
-    borderSide: const BorderSide(color: AppColors.sinopia, width: 1.5),
-    borderRadius: BorderRadius.circular(14),
-  );
 
   static BoxDecoration glassDecoration({
     double radius = 16,

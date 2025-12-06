@@ -59,14 +59,14 @@ class _CustomFieldState extends State<CustomField> {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: _focus.hasFocus
-                ? AppColors.sinopia
-                : AppColors.sinopia.withOpacity(0.6),
+                ? AppColors.navy
+                : AppColors.navy.withOpacity(0.6),
             width: 1.5,
           ),
           boxShadow: _focus.hasFocus
               ? [
                   BoxShadow(
-                    color: AppColors.sinopia.withOpacity(0.25),
+                    color: AppColors.navy.withOpacity(0.12),
                     blurRadius: 18,
                     spreadRadius: 1,
                   ),
@@ -110,7 +110,7 @@ class _CustomFieldState extends State<CustomField> {
                           : Icons.visibility_outlined,
                       size: 18,
                       color: _focus.hasFocus
-                          ? AppColors.sinopia
+                          ? AppColors.navy
                           : AppColors.navy.withOpacity(0.55),
                     ),
                     onPressed: () => setState(() => _obscure = !_obscure),

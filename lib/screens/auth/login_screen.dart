@@ -49,10 +49,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _error = e.toString();
       });
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _loading = false;
         });
+      }
     }
   }
 

@@ -13,6 +13,8 @@ import '../../theme/theme.dart';
 import '../../widgets/glass_button.dart';
 import '../chat/chat_detail_screen.dart';
 import 'new_chat_screen.dart';
+import '../settings/settings_screen.dart';
+import 'package:image_picker/image_picker.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -98,6 +100,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  Future<void> _openCamera() async {
+    try {
+      final picker = ImagePicker();
+      final XFile? photo = await picker.pickImage(source: ImageSource.camera);
+      if (!mounted) return;
+      if (photo == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Camera cancelled')));
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Photo captured')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Camera error: $e')));
+    }
+  }
+
+  void _onMenuSelected(String value) {
+    switch (value) {
+      case 'settings':
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+        break;
+      case 'new_group':
+      case 'new_community':
+      case 'broadcast_lists':
+      case 'starred':
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Coming soon: ${value.replaceAll('_', ' ')}')),
+        );
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final chatList = ref.watch(chatListProvider);
@@ -105,6 +147,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
+        centerTitle: false,
         title: Text(
           _titles[_currentIndex],
           style: const TextStyle(
@@ -114,12 +157,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
         actions: [
           IconButton(
-            onPressed: _openProfile,
-            icon: const Icon(Icons.person_outline),
+            icon: const Icon(Icons.camera_alt_outlined, color: AppColors.navy),
+            onPressed: _openCamera,
+            tooltip: 'Camera',
           ),
-          IconButton(
-            onPressed: () => ref.read(firebaseAuthServiceProvider).signOut(),
-            icon: const Icon(Icons.logout),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: AppColors.navy),
+            onSelected: _onMenuSelected,
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'new_group', child: Text('New group')),
+              PopupMenuItem(
+                value: 'new_community',
+                child: Text('New community'),
+              ),
+              PopupMenuItem(
+                value: 'broadcast_lists',
+                child: Text('Broadcast lists'),
+              ),
+              PopupMenuItem(value: 'starred', child: Text('Starred messages')),
+              PopupMenuItem(value: 'settings', child: Text('Settings')),
+            ],
           ),
         ],
       ),
@@ -133,12 +190,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.all(12.0),
-                child: TextField(
-                  controller: _chatSearchController,
-                  onChanged: (_) => setState(() {}),
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search),
-                    hintText: 'Search chats',
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.navy, width: 1.5),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  child: TextField(
+                    controller: _chatSearchController,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      prefixIcon: Icon(
+                        Icons.search,
+                        color: AppColors.navy,
+                        size: 20,
+                      ),
+                      hintText: 'Search chats',
+                    ),
                   ),
                 ),
               ),
@@ -154,39 +228,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       );
                     }
                     final q = _chatSearchController.text.trim().toLowerCase();
-                    final filtered = q.isEmpty
-                        ? docs
-                        : docs.where((d) {
-                            final data = d.data();
-                            final members = List<String>.from(
-                              data['members'] as List,
-                            );
-                            final me = FirebaseAuth.instance.currentUser!.uid;
-                            final peerId = members.firstWhere(
-                              (m) => m != me,
-                              orElse: () => me,
-                            );
-                            final last = (data['lastMessage'] as String?) ?? '';
-                            return peerId.toLowerCase().contains(q) ||
-                                last.toLowerCase().contains(q);
-                          }).toList();
-                    return ListView.separated(
-                      itemCount: filtered.length,
-                      separatorBuilder: (context, index) => Center(
-                        child: FractionallySizedBox(
-                          widthFactor: 0.68,
-                          child: Container(
-                            height: 0.5,
-                            margin: const EdgeInsets.symmetric(vertical: 2),
-                            decoration: BoxDecoration(
-                              color: AppColors.sinopia.withOpacity(0.22),
-                              borderRadius: BorderRadius.circular(1),
-                            ),
-                          ),
-                        ),
-                      ),
+                    return ListView.builder(
+                      itemCount: docs.length,
                       itemBuilder: (context, index) {
-                        final d = filtered[index];
+                        final d = docs[index];
                         final data = d.data();
                         final members = List<String>.from(
                           data['members'] as List,
@@ -559,14 +604,44 @@ class _ProfileSheetState extends ConsumerState<_ProfileSheet> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: _name,
-                  decoration: const InputDecoration(labelText: 'Name'),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.navy, width: 1.5),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  child: TextField(
+                    controller: _name,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'Name',
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: _about,
-                  decoration: const InputDecoration(labelText: 'About'),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.navy, width: 1.5),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  child: TextField(
+                    controller: _about,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      labelText: 'About',
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Row(

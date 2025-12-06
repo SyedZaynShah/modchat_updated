@@ -3,7 +3,6 @@ import 'package:video_player/video_player.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
-import 'package:photo_view/photo_view.dart';
 import '../models/message_model.dart';
 import '../services/supabase_service.dart';
 import '../services/storage_service.dart';

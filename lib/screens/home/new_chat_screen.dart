@@ -162,7 +162,7 @@ class _ToSearchBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.sinopia, width: 1.5),
+        border: Border.all(color: AppColors.navy, width: 1.5),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(

@@ -385,7 +385,13 @@ class _InputFieldState extends State<InputField> {
             children: [
               IconButton(
                 onPressed: _pickFile,
-                icon: const Icon(Icons.attach_file, color: Color(0xFF1E1E1E)),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                icon: const Icon(
+                  Icons.attach_file,
+                  color: AppColors.navy,
+                  size: 22,
+                ),
               ),
               Expanded(
                 child: TextField(
@@ -400,6 +406,8 @@ class _InputFieldState extends State<InputField> {
                     }
                   },
                   decoration: const InputDecoration(
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 8),
                     hintText: 'Type a message',
                     border: InputBorder.none,
                   ),
@@ -423,10 +431,15 @@ class _InputFieldState extends State<InputField> {
                           ? IconButton(
                               key: const ValueKey('send'),
                               onPressed: _send,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(
+                                minWidth: 32,
+                                minHeight: 32,
+                              ),
                               icon: const Icon(
                                 Icons.send,
-                                color: AppColors.sinopia,
-                                size: 26,
+                                color: AppColors.navy,
+                                size: 22,
                               ),
                             )
                           : GestureDetector(
@@ -443,8 +456,8 @@ class _InputFieldState extends State<InputField> {
                                 padding: EdgeInsets.all(4.0),
                                 child: Icon(
                                   Icons.mic,
-                                  color: AppColors.sinopia,
-                                  size: 26,
+                                  color: AppColors.navy,
+                                  size: 22,
                                 ),
                               ),
                             )),
@@ -475,13 +488,14 @@ class _InputFieldState extends State<InputField> {
                       ),
                       const SizedBox(width: 8),
                     ],
+                    if (_locked) const Spacer(),
                     _Waveform(values: _wave),
                     const SizedBox(width: 8),
                     Text(
                       _fmtElapsed(),
                       style: const TextStyle(
                         fontSize: 12,
-                        color: Colors.black87,
+                        color: AppColors.navy,
                       ),
                     ),
                   ],
@@ -497,7 +511,12 @@ class _InputFieldState extends State<InputField> {
                 ),
                 IconButton(
                   onPressed: _finishRecSend,
-                  icon: const Icon(Icons.send, color: AppColors.sinopia),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                  icon: const Icon(Icons.send, color: AppColors.navy, size: 22),
                 ),
               ],
             ],
@@ -505,8 +524,12 @@ class _InputFieldState extends State<InputField> {
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: AppTheme.glassDecoration(radius: 28),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: Color(0xFFF7F7F7),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: AppColors.navy, width: 1.5),
+      ),
       child: composer,
     );
   }
@@ -542,7 +565,7 @@ class _Waveform extends StatelessWidget {
               width: 3,
               height: h,
               decoration: BoxDecoration(
-                color: AppColors.sinopia,
+                color: AppColors.navy,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),

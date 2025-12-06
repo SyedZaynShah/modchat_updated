@@ -32,10 +32,11 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
         _msg = e.toString();
       });
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _sending = false;
         });
+      }
     }
   }
 
@@ -55,10 +56,11 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
         });
       }
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _checking = false;
         });
+      }
     }
   }
 

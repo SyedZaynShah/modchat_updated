@@ -99,11 +99,24 @@ class _NewContactScreenState extends ConsumerState<NewContactScreen> {
                 const Icon(Icons.person, color: AppColors.navy, size: 28),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: TextField(
-                    controller: _emailController,
-                    decoration: const InputDecoration(
-                      labelText: 'Email',
-                      hintText: 'Enter email to add contact',
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.navy, width: 1.5),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    child: TextField(
+                      controller: _emailController,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        labelText: 'Email',
+                        hintText: 'Enter email to add contact',
+                      ),
                     ),
                   ),
                 ),

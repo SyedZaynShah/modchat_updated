@@ -61,10 +61,11 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
         _error = e.toString();
       });
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _loading = false;
         });
+      }
     }
   }
 
