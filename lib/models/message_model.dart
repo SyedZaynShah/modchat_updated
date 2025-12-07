@@ -28,6 +28,7 @@ class MessageModel {
   final int status; // 1 sent, 2 delivered, 3 seen
   final bool edited;
   final bool isDeletedForAll;
+  final bool hasPendingWrites;
 
   MessageModel({
     required this.id,
@@ -45,6 +46,7 @@ class MessageModel {
     this.status = 1,
     this.edited = false,
     this.isDeletedForAll = false,
+    this.hasPendingWrites = false,
   });
 
   factory MessageModel.fromMap(Map<String, dynamic> data, String id) {
@@ -106,6 +108,72 @@ class MessageModel {
           (data['isDeletedForAll'] as bool?) ??
           (data['deletedForEveryone'] as bool?) ??
           false,
+      hasPendingWrites: false,
+    );
+  }
+
+  factory MessageModel.fromDoc(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+    final url = (data['mediaUrl'] as String?) ?? '';
+    final text = data['text'] as String?;
+    final mediaType = (data['mediaType'] as String?)?.toLowerCase();
+    final legacyMessageType = data['messageType'] as String?;
+    MessageType type;
+    if (mediaType != null) {
+      switch (mediaType) {
+        case 'image':
+          type = MessageType.image;
+          break;
+        case 'video':
+          type = MessageType.video;
+          break;
+        case 'audio':
+          type = MessageType.audio;
+          break;
+        case 'pdf':
+        case 'doc':
+        case 'ppt':
+        case 'zip':
+          type = MessageType.file;
+          break;
+        default:
+          type = (text != null && text.isNotEmpty)
+              ? MessageType.text
+              : MessageType.file;
+      }
+    } else {
+      type = MessageTypeExt.from(legacyMessageType ?? 'text');
+      if ((legacyMessageType == null || legacyMessageType == 'text') &&
+          (url.isNotEmpty || (text != null && _looksLikeUrl(text)))) {
+        final probe = url.isNotEmpty ? url : text!;
+        type = _guessTypeFromUrl(probe);
+      }
+    }
+    final effectiveUrl = url.isNotEmpty
+        ? url
+        : (text != null && _looksLikeUrl(text) ? text : null);
+    return MessageModel(
+      id: doc.id,
+      chatId: data['chatId'] as String,
+      senderId: data['senderId'] as String,
+      receiverId: data['receiverId'] as String,
+      text: (effectiveUrl != null && type != MessageType.text) ? null : text,
+      messageType: type,
+      mediaUrl: effectiveUrl,
+      mediaSize: (data['mediaSize'] as num?)?.toInt(),
+      timestamp: data['timestamp'] as Timestamp? ?? Timestamp.now(),
+      isSeen: data['isSeen'] as bool? ?? false,
+      seenAt: data['seenAt'] as Timestamp?,
+      deliveredAt: data['deliveredAt'] as Timestamp?,
+      status: (data['status'] as num?)?.toInt() ?? 1,
+      edited: data['edited'] as bool? ?? false,
+      isDeletedForAll:
+          (data['isDeletedForAll'] as bool?) ??
+          (data['deletedForEveryone'] as bool?) ??
+          false,
+      hasPendingWrites: doc.metadata.hasPendingWrites,
     );
   }
 

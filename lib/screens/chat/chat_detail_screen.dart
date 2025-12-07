@@ -10,6 +10,7 @@ import '../../widgets/message_bubble.dart';
 import '../../widgets/input_field.dart';
 import '../../services/supabase_service.dart';
 import '../../services/storage_service.dart';
+import 'chat_contact_info_screen.dart';
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
   static const routeName = '/chat-detail';
@@ -31,6 +32,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   bool _nearBottom = true;
   // typing state no longer used for VN visibility (handled inside InputField)
   int _lastCount = 0;
+  bool _didInitialScroll = false;
 
   @override
   void initState() {
@@ -192,65 +194,180 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(title: _PeerTitle(peerId: widget.peerId)),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: messages.when(
-                data: (list) {
-                  final hidden = hides.maybeWhen(
-                    data: (s) => s,
-                    orElse: () => <String>{},
-                  );
-                  final filtered = list
-                      .where((m) => !hidden.contains(m.id))
-                      .toList();
-                  if (_ackSent) {
-                    if (filtered.length > _lastCount && _nearBottom) {
-                      ref.read(chatServiceProvider).markAllSeen(widget.chatId);
-                      // Only auto-scroll when we received new messages and are at bottom
-                      WidgetsBinding.instance.addPostFrameCallback(
-                        (_) => _maybeScrollToBottom(),
+      appBar: AppBar(
+        title: _PeerTitle(peerId: widget.peerId, chatId: widget.chatId),
+        centerTitle: false,
+        automaticallyImplyLeading: true,
+        iconTheme: const IconThemeData(color: AppColors.navy, size: 18),
+        titleSpacing: 0,
+        leadingWidth: 40,
+        actions: [
+          IconButton(
+            onPressed: () {},
+            icon: const Icon(
+              Icons.videocam_outlined,
+              color: AppColors.navy,
+              size: 18,
+            ),
+          ),
+          IconButton(
+            onPressed: () {},
+            icon: const Icon(
+              Icons.call_outlined,
+              color: AppColors.navy,
+              size: 18,
+            ),
+          ),
+          PopupMenuButton<String>(
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'contact', child: Text('Contact info')),
+              PopupMenuItem(value: 'report', child: Text('Report')),
+              PopupMenuItem(value: 'block', child: Text('Block')),
+            ],
+            onSelected: (v) {
+              if (v == 'contact') {
+                Navigator.pushNamed(
+                  context,
+                  ChatContactInfoScreen.routeName,
+                  arguments: {'peerId': widget.peerId, 'chatId': widget.chatId},
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(v == 'report' ? 'Reported' : 'Blocked'),
+                  ),
+                );
+              }
+            },
+            icon: const Icon(Icons.more_vert, color: AppColors.navy, size: 18),
+          ),
+        ],
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
+        ),
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(3),
+          child: SizedBox(
+            height: 3,
+            child: DecoratedBox(
+              decoration: BoxDecoration(color: AppColors.sinopia),
+            ),
+          ),
+        ),
+      ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset('lib/assets/background.png', fit: BoxFit.cover),
+          SafeArea(
+            child: Column(
+              children: [
+                Expanded(
+                  child: messages.when(
+                    data: (list) {
+                      final hidden = hides.maybeWhen(
+                        data: (s) => s,
+                        orElse: () => <String>{},
                       );
-                    }
-                    _lastCount = filtered.length;
-                  }
-                  return ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 12,
-                    ),
-                    itemCount: filtered.length,
-                    itemBuilder: (context, index) {
-                      final m = filtered[index];
-                      final isMe = m.senderId == me;
-                      return GestureDetector(
-                        key: ValueKey(m.id),
-                        onLongPress: () =>
-                            _onMessageLongPress(context, m, isMe),
-                        child: Align(
-                          alignment: isMe
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
-                          child: MessageBubble(message: m, isMe: isMe),
+                      final filtered = list
+                          .where((m) => !hidden.contains(m.id))
+                          .toList();
+                      if (_ackSent) {
+                        if (filtered.length > _lastCount && _nearBottom) {
+                          ref
+                              .read(chatServiceProvider)
+                              .markAllSeen(widget.chatId);
+                          // Only auto-scroll when we received new messages and are at bottom
+                          WidgetsBinding.instance.addPostFrameCallback(
+                            (_) => _maybeScrollToBottom(),
+                          );
+                        }
+                        _lastCount = filtered.length;
+                      }
+                      if (!_didInitialScroll) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (_scrollController.hasClients) {
+                            _scrollController.jumpTo(
+                              _scrollController.position.maxScrollExtent + 80,
+                            );
+                          }
+                        });
+                        setState(() => _didInitialScroll = true);
+                      }
+                      return ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
                         ),
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) {
+                          final m = filtered[index];
+                          final isMe = m.senderId == me;
+                          return GestureDetector(
+                            key: ValueKey(m.id),
+                            onLongPress: () =>
+                                _onMessageLongPress(context, m, isMe),
+                            child: Align(
+                              alignment: isMe
+                                  ? Alignment.centerRight
+                                  : Alignment.centerLeft,
+                              child: MessageBubble(message: m, isMe: isMe),
+                            ),
+                          );
+                        },
                       );
                     },
-                  );
-                },
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, _) => Center(child: Text('Error: $e')),
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (e, _) => Center(child: Text('Error: $e')),
+                  ),
+                ),
+                InputField(
+                  onSend: _sendText,
+                  onSendMedia: _sendMedia,
+                  onTypingChanged: _onTypingChanged,
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            right: 16,
+            bottom: 84,
+            child: AnimatedOpacity(
+              opacity: _nearBottom ? 0.0 : 1.0,
+              duration: const Duration(milliseconds: 150),
+              child: Visibility(
+                visible: !_nearBottom,
+                child: Material(
+                  color: AppColors.navy,
+                  shape: const CircleBorder(),
+                  elevation: 2,
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () {
+                      if (_scrollController.hasClients) {
+                        _scrollController.animateTo(
+                          _scrollController.position.maxScrollExtent,
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeOut,
+                        );
+                      }
+                    },
+                    child: const Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: Icon(
+                        Icons.arrow_downward,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
-            InputField(
-              onSend: _sendText,
-              onSendMedia: _sendMedia,
-              onTypingChanged: _onTypingChanged,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -258,52 +375,66 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
 class _PeerTitle extends ConsumerWidget {
   final String peerId;
-  const _PeerTitle({required this.peerId});
+  final String chatId;
+  const _PeerTitle({required this.peerId, required this.chatId});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(userDocProvider(peerId));
     return user.when(
-      data: (u) => Row(
-        children: [
-          FutureBuilder<ImageProvider?>(
-            future: () async {
-              final url = u?.profileImageUrl;
-              if (url == null || url.isEmpty) return null;
-              if (url.startsWith('sb://')) {
-                final s = url.substring(5);
-                final i = s.indexOf('/');
-                final bucket = s.substring(0, i);
-                final path = s.substring(i + 1);
-                final signed = await SupabaseService.instance.getSignedUrl(
-                  bucket,
-                  path,
-                  expiresInSeconds: 86400,
-                );
-                return NetworkImage(signed);
-              }
-              if (!url.contains('://')) {
-                final signed = await SupabaseService.instance.resolveUrl(
-                  bucket: StorageService().profileBucket,
-                  path: url,
-                );
-                return NetworkImage(signed);
-              }
-              return NetworkImage(url);
-            }(),
-            builder: (context, snap) => CircleAvatar(
-              radius: 16,
-              backgroundImage: snap.data,
-              child: snap.data == null
-                  ? const Icon(Icons.person, size: 18)
-                  : null,
+      data: (u) => InkWell(
+        onTap: () => Navigator.pushNamed(
+          context,
+          ChatContactInfoScreen.routeName,
+          arguments: {'peerId': peerId, 'chatId': chatId},
+        ),
+        child: Row(
+          children: [
+            FutureBuilder<ImageProvider?>(
+              future: () async {
+                final url = u?.profileImageUrl;
+                if (url == null || url.isEmpty) return null;
+                if (url.startsWith('sb://')) {
+                  final s = url.substring(5);
+                  final i = s.indexOf('/');
+                  final bucket = s.substring(0, i);
+                  final path = s.substring(i + 1);
+                  final signed = await SupabaseService.instance.getSignedUrl(
+                    bucket,
+                    path,
+                    expiresInSeconds: 86400,
+                  );
+                  return NetworkImage(signed);
+                }
+                if (!url.contains('://')) {
+                  final signed = await SupabaseService.instance.resolveUrl(
+                    bucket: StorageService().profileBucket,
+                    path: url,
+                  );
+                  return NetworkImage(signed);
+                }
+                return NetworkImage(url);
+              }(),
+              builder: (context, snap) => CircleAvatar(
+                radius: 16,
+                backgroundImage: snap.data,
+                child: snap.data == null
+                    ? const Icon(Icons.person, size: 18)
+                    : null,
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            u?.name.isNotEmpty == true ? u!.name : peerId,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-        ],
+            const SizedBox(width: 6),
+            Text(
+              u?.name.isNotEmpty == true ? u!.name : peerId,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                color: AppColors.navy,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
       ),
       loading: () => const Text('...'),
       error: (e, _) => Text(peerId),

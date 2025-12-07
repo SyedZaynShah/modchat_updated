@@ -115,7 +115,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
       body: userDoc.when(
         data: (user) {
-          _bioCtrl.text = user?.about ?? '';
+          if (!_editingBio) {
+            _bioCtrl.text = user?.about ?? '';
+          }
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -248,6 +250,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   OutlinedButton(
                                     onPressed: () =>
                                         setState(() => _editingBio = true),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppColors.navy,
+                                      side: const BorderSide(
+                                        color: AppColors.navy,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
                                     child: const Text('Edit bio'),
                                   ),
                                 ],
@@ -347,6 +358,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
 
               const SizedBox(height: 12),
+
+              // Logout
+              const Divider(height: 24),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () async {
+                    await FirebaseAuth.instance.signOut();
+                    if (!mounted) return;
+                    Navigator.of(context).pop();
+                  },
+                  splashColor: AppColors.navy.withOpacity(0.08),
+                  highlightColor: AppColors.navy.withOpacity(0.06),
+                  child: const ListTile(
+                    leading: Icon(Icons.logout, color: Colors.redAccent),
+                    title: Text(
+                      'Logout',
+                      style: TextStyle(
+                        color: AppColors.navy,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ],
           );
         },

@@ -198,11 +198,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
-                    vertical: 2,
+                    vertical: 0,
                   ),
                   child: TextField(
                     controller: _chatSearchController,
                     onChanged: (_) => setState(() {}),
+                    textAlignVertical: TextAlignVertical.center,
                     decoration: const InputDecoration(
                       isDense: true,
                       border: InputBorder.none,
@@ -211,6 +212,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         color: AppColors.navy,
                         size: 20,
                       ),
+                      prefixIconConstraints: BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      contentPadding: EdgeInsets.symmetric(vertical: 0),
+                      filled: true,
+                      fillColor: Colors.transparent,
                       hintText: 'Search chats',
                     ),
                   ),

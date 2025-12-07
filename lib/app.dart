@@ -9,6 +9,7 @@ import 'screens/auth/signup_screen.dart';
 import 'screens/auth/verify_email_screen.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/chat/chat_detail_screen.dart';
+import 'screens/chat/chat_contact_info_screen.dart';
 import 'ui/splash/splash_screen.dart';
 
 class App extends ConsumerWidget {
@@ -35,6 +36,15 @@ class App extends ConsumerWidget {
             builder: (_) => ChatDetailScreen(
               chatId: args['chatId'] as String,
               peerId: args['peerId'] as String,
+            ),
+          );
+        }
+        if (settings.name == ChatContactInfoScreen.routeName) {
+          final args = settings.arguments as Map<String, dynamic>;
+          return MaterialPageRoute(
+            builder: (_) => ChatContactInfoScreen(
+              peerId: args['peerId'] as String,
+              chatId: args['chatId'] as String,
             ),
           );
         }

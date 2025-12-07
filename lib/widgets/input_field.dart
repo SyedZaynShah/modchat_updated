@@ -410,6 +410,8 @@ class _InputFieldState extends State<InputField> {
                     contentPadding: EdgeInsets.symmetric(vertical: 8),
                     hintText: 'Type a message',
                     border: InputBorder.none,
+                    filled: true,
+                    fillColor: Colors.transparent,
                   ),
                 ),
               ),

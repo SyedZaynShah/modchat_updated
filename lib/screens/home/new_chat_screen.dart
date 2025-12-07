@@ -164,7 +164,7 @@ class _ToSearchBar extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.navy, width: 1.5),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: Row(
         children: [
           const Text(
@@ -180,9 +180,13 @@ class _ToSearchBar extends StatelessWidget {
             child: TextField(
               controller: controller,
               onChanged: onChanged,
+              textAlignVertical: TextAlignVertical.center,
               decoration: const InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
+                contentPadding: EdgeInsets.symmetric(vertical: 0),
+                filled: true,
+                fillColor: Colors.transparent,
                 hintText: 'Search name or email',
                 hintStyle: TextStyle(color: Colors.black54),
               ),

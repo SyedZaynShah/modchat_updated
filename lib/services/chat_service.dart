@@ -69,7 +69,7 @@ class ChatService {
     return _fs
         .messages(chatId)
         .orderBy('timestamp', descending: false)
-        .snapshots()
+        .snapshots(includeMetadataChanges: true)
         .map((s) {
           final docs = s.docs.where((d) {
             final data = d.data();
@@ -92,7 +92,7 @@ class ChatService {
                 ? true
                 : (!deletedFor.contains(uid) && !hiddenByMap);
           });
-          return docs.map((d) => MessageModel.fromMap(d.data(), d.id)).toList();
+          return docs.map((d) => MessageModel.fromDoc(d)).toList();
         })
         .distinct((prev, next) {
           if (prev.length != next.length) return false;
@@ -105,6 +105,7 @@ class ChatService {
             if (a.edited != b.edited) return false;
             if ('${a.text}' != '${b.text}') return false;
             if ('${a.mediaUrl}' != '${b.mediaUrl}') return false;
+            if (a.hasPendingWrites != b.hasPendingWrites) return false;
           }
           return true;
         });
