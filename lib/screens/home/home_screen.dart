@@ -11,6 +11,7 @@ import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
 import '../../theme/theme.dart';
 import '../../widgets/glass_button.dart';
+import '../../widgets/wave_nav_bar.dart';
 import '../chat/chat_detail_screen.dart';
 import 'new_chat_screen.dart';
 import '../settings/settings_screen.dart';
@@ -298,97 +299,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       bottomNavigationBar: _buildBottomNav(),
     );
   }
+
+  Widget _buildBottomNav() {
+    return WaveNavBar(
+      items: const [
+        WaveNavItem(icon: Icons.chat_bubble_rounded, label: 'Chats'),
+        WaveNavItem(icon: Icons.update, label: 'Updates'),
+        WaveNavItem(icon: Icons.groups_rounded, label: 'Communities'),
+        WaveNavItem(icon: Icons.call_rounded, label: 'Calls'),
+      ],
+      currentIndex: _currentIndex,
+      onTap: (index) {
+        setState(() => _currentIndex = index);
+        _pageController.animateToPage(
+          index,
+          duration: const Duration(milliseconds: 420),
+          curve: Curves.easeInOutCubicEmphasized,
+        );
+      },
+      barColor: AppColors.navy,
+      iconColor: AppColors.white,
+      activeIconColor: AppColors.navy,
+      cornerRadius: 20,
+      height: 74,
+    );
+  }
 }
 
 extension on _HomeScreenState {
-  Widget _buildBottomNav() {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(16),
-          topRight: Radius.circular(16),
-        ),
-        border: const Border(
-          top: BorderSide(color: AppColors.sinopia, width: 1.5),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.navy.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.only(top: 8, bottom: 10),
-      child: SafeArea(
-        top: false,
-        child: Row(
-          children: [
-            _navItem(icon: Icons.chat_bubble_rounded, label: 'Chats', index: 0),
-            _navItem(icon: Icons.update, label: 'Updates', index: 1),
-            _navItem(
-              icon: Icons.groups_rounded,
-              label: 'Communities',
-              index: 2,
-            ),
-            _navItem(icon: Icons.call_rounded, label: 'Calls', index: 3),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _navItem({
-    required IconData icon,
-    required String label,
-    required int index,
-  }) {
-    final selected = _currentIndex == index;
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          setState(() => _currentIndex = index);
-          _pageController.animateToPage(
-            index,
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeOut,
-          );
-        },
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: AppColors.navy, size: 22),
-              const SizedBox(height: 4),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                height: 2,
-                width: 24,
-                decoration: BoxDecoration(
-                  color: selected ? AppColors.sinopia : Colors.transparent,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppColors.navy,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildPlaceholder({required IconData icon, required String text}) {
     return Center(
       child: Column(

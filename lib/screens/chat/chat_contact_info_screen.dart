@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:ui' as ui;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/user_providers.dart';
 import '../../providers/chat_providers.dart';
@@ -99,81 +100,21 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                         : null,
                   ),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  (u?.name.isNotEmpty == true ? u!.name : widget.peerId),
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.navy,
+                Transform.translate(
+                  offset: const Offset(0, -44),
+                  child: _NotchedActionsBar(
+                    avatarRadius: 44,
+                    gap: 10,
+                    height: 214,
+                    title: (u?.name.isNotEmpty == true
+                        ? u!.name
+                        : widget.peerId),
+                    subtitle: (u?.about ?? ''),
+                    onCall: () {},
+                    onVideo: () {},
                   ),
                 ),
-                if ((u?.about ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    u!.about!,
-                    style: const TextStyle(fontSize: 13, color: Colors.black54),
-                  ),
-                ],
-                const SizedBox(height: 20),
-                // Call / Video row with 3-dot menu
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {},
-                        icon: const Icon(
-                          Icons.call_outlined,
-                          size: 18,
-                          color: AppColors.navy,
-                        ),
-                        label: const Text(
-                          'Call',
-                          style: TextStyle(color: AppColors.navy),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: AppColors.navy),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {},
-                        icon: const Icon(
-                          Icons.videocam_outlined,
-                          size: 18,
-                          color: AppColors.navy,
-                        ),
-                        label: const Text(
-                          'Video',
-                          style: TextStyle(color: AppColors.navy),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: AppColors.navy),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert, color: AppColors.navy),
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(value: 'block', child: Text('Block')),
-                        PopupMenuItem(value: 'report', child: Text('Report')),
-                      ],
-                      onSelected: (v) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              v == 'block' ? 'Blocked' : 'Reported',
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
@@ -394,7 +335,7 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 30),
                 const Divider(height: 24),
                 Material(
                   color: Colors.transparent,
@@ -492,4 +433,155 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
       ),
     ),
   );
+}
+
+class _NotchedActionsBar extends StatelessWidget {
+  final double avatarRadius;
+  final double gap;
+  final double height;
+  final String title;
+  final String subtitle;
+  final VoidCallback onCall;
+  final VoidCallback onVideo;
+
+  const _NotchedActionsBar({
+    required this.avatarRadius,
+    required this.gap,
+    required this.height,
+    required this.title,
+    required this.subtitle,
+    required this.onCall,
+    required this.onVideo,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final notch = avatarRadius + gap;
+    // Place content ~1.5 lines below the bottom of the circular notch
+    final topInset = notch + 28;
+    return SizedBox(
+      height: height,
+      child: CustomPaint(
+        painter: _ActionsBarPainter(
+          color: AppColors.navy,
+          cornerRadius: 18,
+          notchRadius: notch,
+          shadowColor: Colors.black.withOpacity(0.14),
+        ),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(16, topInset, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Name
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (subtitle.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+              ],
+              const SizedBox(height: 32),
+              // Icons centered with decent spacing
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _iconBtn(Icons.videocam_rounded, onVideo),
+                  const SizedBox(width: 26),
+                  _iconBtn(Icons.call_rounded, onCall),
+                  const SizedBox(width: 26),
+                  PopupMenuButton<String>(
+                    tooltip: 'More',
+                    icon: const Icon(
+                      Icons.more_vert_rounded,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                    color: Colors.white,
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(value: 'block', child: Text('Block')),
+                      PopupMenuItem(value: 'report', child: Text('Report')),
+                    ],
+                    onSelected: (v) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(v == 'block' ? 'Blocked' : 'Reported'),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _iconBtn(IconData icon, VoidCallback onTap) => InkResponse(
+    onTap: onTap,
+    radius: 28,
+    splashColor: AppColors.white.withOpacity(0.12),
+    highlightColor: Colors.transparent,
+    child: Icon(icon, color: Colors.white, size: 24),
+  );
+}
+
+class _ActionsBarPainter extends CustomPainter {
+  final Color color;
+  final double cornerRadius;
+  final double notchRadius;
+  final Color shadowColor;
+
+  _ActionsBarPainter({
+    required this.color,
+    required this.cornerRadius,
+    required this.notchRadius,
+    required this.shadowColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    final rrect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, 0, w, h),
+      Radius.circular(cornerRadius),
+    );
+
+    final rectPath = Path()..addRRect(rrect);
+
+    final notchPath = Path()
+      ..addOval(Rect.fromCircle(center: Offset(w / 2, 0), radius: notchRadius));
+
+    final path = Path.combine(ui.PathOperation.difference, rectPath, notchPath);
+
+    canvas.drawShadow(path, shadowColor, 12, false);
+    final paint = Paint()..color = color;
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ActionsBarPainter oldDelegate) {
+    return oldDelegate.color != color ||
+        oldDelegate.cornerRadius != cornerRadius ||
+        oldDelegate.notchRadius != notchRadius ||
+        oldDelegate.shadowColor != shadowColor;
+  }
 }

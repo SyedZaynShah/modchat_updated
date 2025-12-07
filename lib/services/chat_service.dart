@@ -364,8 +364,12 @@ class ChatService {
       }
       await _fs.dmChats.doc(chatId).delete();
     } catch (e) {
-      // If we cannot delete (e.g., insufficient permission), hide chat for current user
-      await hideChatForMe(chatId);
+      // If we cannot delete (e.g., insufficient permission), try hiding the chat for current user
+      try {
+        await hideChatForMe(chatId);
+      } catch (_) {
+        // Swallow to avoid crashing UI; caller may show error feedback.
+      }
     }
   }
 
