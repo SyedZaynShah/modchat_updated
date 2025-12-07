@@ -261,6 +261,7 @@ class ChatService {
       'edited': true,
       'editedAt': FieldValue.serverTimestamp(),
     });
+    await _refreshChatLastMessage(chatId);
   }
 
   Future<void> deleteForMe({
@@ -280,6 +281,11 @@ class ChatService {
         },
       }, SetOptions(merge: true));
     }
+    // Also persist on message doc so other clients/devices respect deletion
+    final msgRef = _fs.messages(chatId).doc(messageId);
+    await msgRef.set({
+      'deletedFor': FieldValue.arrayUnion([uid]),
+    }, SetOptions(merge: true));
   }
 
   Future<void> deleteForEveryone({
@@ -304,6 +310,71 @@ class ChatService {
       'mediaType': null,
       'deletedAt': FieldValue.serverTimestamp(),
     });
+    await _refreshChatLastMessage(chatId);
+  }
+
+  Future<void> _refreshChatLastMessage(String chatId) async {
+    // Recompute last message snapshot based on latest non-deleted message
+    final q = await _fs
+        .messages(chatId)
+        .orderBy('timestamp', descending: true)
+        .limit(10)
+        .get();
+
+    String? lastText;
+    String? lastType;
+    FieldValue now = FieldValue.serverTimestamp();
+    for (final d in q.docs) {
+      final data = d.data();
+      final deleted =
+          (data['isDeletedForAll'] as bool?) == true ||
+          (data['deletedForEveryone'] as bool?) == true;
+      if (deleted) continue;
+      final mediaType = (data['mediaType'] as String?)?.toLowerCase();
+      final text = data['text'] as String?;
+      if (mediaType == null || mediaType.isEmpty) {
+        lastType = 'text';
+        lastText = text ?? '';
+      } else {
+        lastType = mediaType;
+        lastText = mediaType; // keep existing behavior for media previews
+      }
+      break;
+    }
+    await _fs.dmChats.doc(chatId).update({
+      'lastMessage': lastText,
+      'lastMessageType': lastType,
+      'lastTimestamp': now,
+    });
+  }
+
+  Future<void> deleteChatPermanently(String chatId) async {
+    try {
+      // Delete messages in batches to respect Firestore limits
+      const batchSize = 300;
+      while (true) {
+        final snap = await _fs.messages(chatId).limit(batchSize).get();
+        if (snap.docs.isEmpty) break;
+        final batch = FirebaseFirestore.instance.batch();
+        for (final d in snap.docs) {
+          batch.delete(d.reference);
+        }
+        await batch.commit();
+        if (snap.docs.length < batchSize) break;
+      }
+      await _fs.dmChats.doc(chatId).delete();
+    } catch (e) {
+      // If we cannot delete (e.g., insufficient permission), hide chat for current user
+      await hideChatForMe(chatId);
+    }
+  }
+
+  Future<void> hideChatForMe(String chatId) async {
+    final uid = _auth.currentUser!.uid;
+    final userDoc = _fs.users.doc(uid);
+    await userDoc.set({
+      'hiddenChats': FieldValue.arrayUnion([chatId]),
+    }, SetOptions(merge: true));
   }
 
   String _mediaTypeFor(String name, String contentType, MessageType type) {

@@ -145,13 +145,26 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                       ),
                     );
                     if (newText != null && newText.isNotEmpty) {
-                      await ref
-                          .read(chatServiceProvider)
-                          .editMessage(
-                            chatId: widget.chatId,
-                            messageId: m.id,
-                            newText: newText,
+                      try {
+                        await ref
+                            .read(chatServiceProvider)
+                            .editMessage(
+                              chatId: widget.chatId,
+                              messageId: m.id,
+                              newText: newText,
+                            );
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Message edited')),
                           );
+                        }
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Edit failed: $e')),
+                          );
+                        }
+                      }
                     }
                   },
                 ),
@@ -160,9 +173,22 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 title: const Text('Delete for me'),
                 onTap: () async {
                   Navigator.pop(ctx);
-                  await ref
-                      .read(chatServiceProvider)
-                      .deleteForMe(chatId: widget.chatId, messageId: m.id);
+                  try {
+                    await ref
+                        .read(chatServiceProvider)
+                        .deleteForMe(chatId: widget.chatId, messageId: m.id);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Removed for you')),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Delete failed: $e')),
+                      );
+                    }
+                  }
                 },
               ),
               if (isMe)
@@ -171,12 +197,27 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                   title: const Text('Delete for everyone'),
                   onTap: () async {
                     Navigator.pop(ctx);
-                    await ref
-                        .read(chatServiceProvider)
-                        .deleteForEveryone(
-                          chatId: widget.chatId,
-                          messageId: m.id,
+                    try {
+                      await ref
+                          .read(chatServiceProvider)
+                          .deleteForEveryone(
+                            chatId: widget.chatId,
+                            messageId: m.id,
+                          );
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Message deleted for everyone'),
+                          ),
                         );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Delete failed: $e')),
+                        );
+                      }
+                    }
                   },
                 ),
             ],

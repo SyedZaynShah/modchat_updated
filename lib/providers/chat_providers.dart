@@ -41,3 +41,17 @@ final hidesProvider = StreamProvider.family<Set<String>, String>((ref, chatId) {
     return list.toSet();
   });
 });
+
+// Hidden chats for the current user (soft delete of conversations)
+final hiddenChatsProvider = StreamProvider<Set<String>>((ref) {
+  ref.keepAlive();
+  final uid = ref.watch(currentUserProvider)?.uid;
+  if (uid == null) return const Stream.empty();
+  final fs = ref.watch(firestoreServiceProvider);
+  return fs.users.doc(uid).snapshots().map((snap) {
+    if (!snap.exists) return <String>{};
+    final data = snap.data();
+    final list = List<String>.from((data?['hiddenChats'] as List?) ?? const []);
+    return list.toSet();
+  });
+});

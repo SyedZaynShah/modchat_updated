@@ -15,13 +15,21 @@ class ChatScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final chatList = ref.watch(chatListProvider);
+    final hiddenChats = ref.watch(hiddenChatsProvider);
     final me = FirebaseAuth.instance.currentUser?.uid;
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Chats')),
       body: chatList.when(
         data: (docs) {
-          if (docs.isEmpty) {
+          final hidden = hiddenChats.maybeWhen(
+            data: (s) => s,
+            orElse: () => <String>{},
+          );
+          final filteredDocs = docs
+              .where((d) => !hidden.contains(d.id))
+              .toList();
+          if (filteredDocs.isEmpty) {
             return const Center(
               child: Text(
                 'No chats yet',
@@ -30,9 +38,9 @@ class ChatScreen extends ConsumerWidget {
             );
           }
           return ListView.builder(
-            itemCount: docs.length,
+            itemCount: filteredDocs.length,
             itemBuilder: (context, index) {
-              final d = docs[index];
+              final d = filteredDocs[index];
               final data = d.data();
               final members = List<String>.from(data['members'] as List);
               final peerId = members.firstWhere(

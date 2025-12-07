@@ -20,6 +20,18 @@ class MessageBubble extends StatelessWidget {
     return Column(
       crossAxisAlignment: align,
       children: [
+        if (message.edited)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4.0),
+            child: Text(
+              'Edited',
+              style: const TextStyle(
+                color: AppColors.navy,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
         Container(
           constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.78,
@@ -64,7 +76,7 @@ class MessageBubble extends StatelessWidget {
     }
     switch (message.messageType) {
       case MessageType.text:
-        final t = (message.text ?? '') + (message.edited ? ' (edited)' : '');
+        final t = (message.text ?? '');
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -111,14 +123,8 @@ class MessageBubble extends StatelessWidget {
           : timeColor;
       children.add(Icon(iconData, size: 12, color: iconColor));
     }
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: children,
-      ),
-    );
+    // Return a minimal-width row so the bubble shrinks to content width
+    return Row(mainAxisSize: MainAxisSize.min, children: children);
   }
 
   IconData _statusIconData() {

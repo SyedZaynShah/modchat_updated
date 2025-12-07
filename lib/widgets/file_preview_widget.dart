@@ -289,7 +289,7 @@ class _AudioInlineState extends State<_AudioInline> {
               ),
               Expanded(
                 child: SizedBox(
-                  height: 28,
+                  height: 34,
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final w = constraints.maxWidth;
@@ -299,7 +299,7 @@ class _AudioInlineState extends State<_AudioInline> {
                       return Stack(
                         children: [
                           CustomPaint(
-                            size: Size(w, 28),
+                            size: Size(w, 34),
                             painter: _WaveformPainter(
                               bars: _bars,
                               progress: progress,
@@ -308,11 +308,12 @@ class _AudioInlineState extends State<_AudioInline> {
                             ),
                           ),
                           Positioned(
-                            left: (w * progress).clamp(0.0, w - 6.0),
-                            top: 6,
+                            left: (w * progress).clamp(0.0, w - 10.0),
+                            top:
+                                12, // center vertically for 34px height with 10px dot
                             child: Container(
-                              width: 6,
-                              height: 6,
+                              width: 10,
+                              height: 10,
                               decoration: BoxDecoration(
                                 color: mainColor,
                                 shape: BoxShape.circle,

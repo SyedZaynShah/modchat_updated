@@ -394,6 +394,59 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 24),
+                const Divider(height: 24),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text('Delete chat?'),
+                          content: const Text(
+                            'This will permanently delete the conversation and all its messages.',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('Cancel'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              child: const Text('Delete'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirm == true) {
+                        await ref
+                            .read(chatServiceProvider)
+                            .deleteChatPermanently(widget.chatId);
+                        if (!mounted) return;
+                        // Ensure we land on the chat list reliably
+                        Navigator.of(
+                          context,
+                        ).pushNamedAndRemoveUntil('/home', (route) => false);
+                      }
+                    },
+                    splashColor: AppColors.navy.withOpacity(0.08),
+                    highlightColor: AppColors.navy.withOpacity(0.06),
+                    child: const ListTile(
+                      leading: Icon(
+                        Icons.delete_forever,
+                        color: Colors.redAccent,
+                      ),
+                      title: Text(
+                        'Delete chat',
+                        style: TextStyle(
+                          color: AppColors.navy,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           );

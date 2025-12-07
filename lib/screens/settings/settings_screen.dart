@@ -248,8 +248,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   ),
                                   const SizedBox(width: 8),
                                   OutlinedButton(
-                                    onPressed: () =>
-                                        setState(() => _editingBio = true),
+                                    onPressed: () => setState(() {
+                                      _bioCtrl.text = user?.about ?? '';
+                                      _editingBio = true;
+                                    }),
                                     style: OutlinedButton.styleFrom(
                                       foregroundColor: AppColors.navy,
                                       side: const BorderSide(
