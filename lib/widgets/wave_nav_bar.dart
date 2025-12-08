@@ -240,19 +240,24 @@ class _WaveBarPainter extends CustomPainter {
     final double end = (centerX + waveWidth / 2).clamp(0.0, w);
 
     final path = Path();
-    path.moveTo(0, 0);
-    path.lineTo(start, 0);
+    final bool atLeftEdge = start <= 0.0001;
+    final bool atRightEdge = end >= w - 0.0001;
+    final double startY = atLeftEdge ? depth : 0.0;
+    final double endY = atRightEdge ? depth : 0.0;
+
+    path.moveTo(0, startY);
+    path.lineTo(start, startY);
 
     // 🔥 WIDER CONTROL POINTS
     final double c1x = start + waveWidth * 0.40;
     final double c2x = centerX - waveWidth * 0.35;
-    path.cubicTo(c1x, 0, c2x, depth, centerX, depth);
+    path.cubicTo(c1x, startY, c2x, depth, centerX, depth);
 
     final double c3x = centerX + waveWidth * 0.35;
     final double c4x = end - waveWidth * 0.40;
-    path.cubicTo(c3x, depth, c4x, 0, end, 0);
+    path.cubicTo(c3x, depth, c4x, endY, end, endY);
 
-    path.lineTo(w, 0);
+    path.lineTo(w, endY);
     path.lineTo(w, h);
     path.lineTo(0, h);
     path.close();

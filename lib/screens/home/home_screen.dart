@@ -414,8 +414,9 @@ class _ChatListTile extends ConsumerWidget {
                   ? Text(
                       _formatTime(time!),
                       style: const TextStyle(
-                        color: Colors.white54,
+                        color: AppColors.navy,
                         fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       ),
                     )
                   : null,

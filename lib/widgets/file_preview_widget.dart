@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:video_player/video_player.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:http/http.dart' as http;
@@ -31,12 +32,12 @@ class FilePreviewWidget extends StatelessWidget {
         return _AudioInline(url: url, type: message.messageType, isMe: isMe);
       case MessageType.file:
       default:
-        return _FileTile(url: url, type: message.messageType);
+        return _FileTile(url: url, type: message.messageType, isMe: isMe);
     }
   }
 }
 
-class _ImagePreview extends StatelessWidget {
+class _ImagePreview extends StatefulWidget {
   final String url;
   final MessageType type;
   final bool isMe;
@@ -45,64 +46,121 @@ class _ImagePreview extends StatelessWidget {
     required this.type,
     required this.isMe,
   });
-  Future<String> _resolve(String u) async {
-    if (u.contains('://')) {
-      return SupabaseService.instance.resolveUrl(directUrl: u);
+  @override
+  State<_ImagePreview> createState() => _ImagePreviewState();
+}
+
+class _ImagePreviewState extends State<_ImagePreview> {
+  String? _resolved;
+  bool _portrait = false;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    final v = widget.url;
+    final resolved = v.contains('://')
+        ? await SupabaseService.instance.resolveUrl(directUrl: v)
+        : await SupabaseService.instance.resolveUrl(
+            bucket: widget.type == MessageType.audio
+                ? StorageService().audioBucket
+                : StorageService().mediaBucket,
+            path: v,
+          );
+    final img = Image.network(resolved);
+    final c = Completer<ImageInfo>();
+    final stream = img.image.resolve(const ImageConfiguration());
+    late final ImageStreamListener l;
+    l = ImageStreamListener(
+      (info, _) {
+        if (!c.isCompleted) c.complete(info);
+      },
+      onError: (e, st) {
+        if (!c.isCompleted) c.completeError(e, st);
+      },
+    );
+    stream.addListener(l);
+    try {
+      final info = await c.future;
+      final w = info.image.width.toDouble();
+      final h = info.image.height.toDouble();
+      if (mounted) {
+        setState(() {
+          _resolved = resolved;
+          _portrait = h >= w;
+          _ready = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _resolved = resolved;
+          _portrait = false;
+          _ready = true;
+        });
+      }
+    } finally {
+      stream.removeListener(l);
     }
-    final bucket = type == MessageType.audio
-        ? StorageService().audioBucket
-        : StorageService().mediaBucket;
-    return SupabaseService.instance.resolveUrl(bucket: bucket, path: u);
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<String>(
-      future: _resolve(url),
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return const SizedBox(
-            height: 180,
-            width: 260,
-            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-          );
-        }
-        final resolved = snap.data!;
-        return GestureDetector(
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => Scaffold(
-                  backgroundColor: Colors.black,
-                  appBar: AppBar(
-                    actions: [
-                      IconButton(
-                        icon: const Icon(Icons.download_rounded),
-                        onPressed: () async {
-                          await launchUrl(
-                            Uri.parse(resolved),
-                            mode: LaunchMode.externalApplication,
-                          );
-                        },
-                      ),
-                    ],
+    if (!_ready || _resolved == null) {
+      return const SizedBox(
+        height: 180,
+        width: 260,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    final screenW = MediaQuery.of(context).size.width;
+    final maxBubbleW = screenW * 0.78;
+    const portraitSizeW = 220.0;
+    const portraitSizeH = 320.0;
+    const landscapeSizeW = 300.0;
+    const landscapeSizeH = 180.0;
+    final targetW = (_portrait ? portraitSizeW : landscapeSizeW).clamp(
+      0.0,
+      maxBubbleW,
+    );
+    final targetH = _portrait ? portraitSizeH : landscapeSizeH;
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => Scaffold(
+              backgroundColor: Colors.black,
+              appBar: AppBar(
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.download_rounded),
+                    onPressed: () async {
+                      await launchUrl(
+                        Uri.parse(_resolved!),
+                        mode: LaunchMode.externalApplication,
+                      );
+                    },
                   ),
-                  body: PhotoView(imageProvider: NetworkImage(resolved)),
-                ),
+                ],
               ),
-            );
-          },
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.network(
-              resolved,
-              fit: BoxFit.cover,
-              height: 180,
-              width: 260,
+              body: PhotoView(imageProvider: NetworkImage(_resolved!)),
             ),
           ),
         );
       },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          width: targetW,
+          height: targetH,
+          child: Image.network(_resolved!, fit: BoxFit.cover),
+        ),
+      ),
     );
   }
 }
@@ -166,19 +224,36 @@ class _VideoPreviewState extends State<_VideoPreview> {
           );
         }
         final controller = _controller!;
+        final ar = controller.value.aspectRatio == 0
+            ? (16 / 9)
+            : controller.value.aspectRatio;
+        final isPortrait = ar < 1.0;
+        final screenW = MediaQuery.of(context).size.width;
+        final maxBubbleW = screenW * 0.78;
+        const portraitW = 220.0;
+        const portraitH = 320.0;
+        const landscapeW = 300.0;
+        const landscapeH = 180.0;
+        final targetW = (isPortrait ? portraitW : landscapeW).clamp(
+          0.0,
+          maxBubbleW,
+        );
+        final targetH = isPortrait ? portraitH : landscapeH;
         return SizedBox(
-          width: 260,
-          height: 180,
+          width: targetW,
+          height: targetH,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: Stack(
               fit: StackFit.expand,
               children: [
-                AspectRatio(
-                  aspectRatio: controller.value.aspectRatio == 0
-                      ? 16 / 9
-                      : controller.value.aspectRatio,
-                  child: VideoPlayer(controller),
+                FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: targetW,
+                    height: targetW / ar,
+                    child: VideoPlayer(controller),
+                  ),
                 ),
                 Material(
                   color: Colors.transparent,
@@ -426,7 +501,8 @@ List<double> _generateBars(String seed) {
 class _FileTile extends StatelessWidget {
   final String url;
   final MessageType type;
-  const _FileTile({required this.url, required this.type});
+  final bool isMe;
+  const _FileTile({required this.url, required this.type, required this.isMe});
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<String>(
@@ -441,11 +517,18 @@ class _FileTile extends StatelessWidget {
       }(),
       builder: (context, snap) {
         final name = url.split('/').last;
+        final tc = isMe ? Colors.white : const Color(0xFF0A1A3A);
+        final ic = isMe ? Colors.white70 : const Color(0xFF0A1A3A);
         return ListTile(
           contentPadding: EdgeInsets.zero,
-          title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-          leading: const Icon(Icons.insert_drive_file, color: Colors.white70),
-          trailing: const Icon(Icons.open_in_new, color: Colors.white70),
+          title: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: tc, fontWeight: FontWeight.w700),
+          ),
+          leading: Icon(Icons.insert_drive_file, color: ic),
+          trailing: Icon(Icons.open_in_new, color: ic),
           onTap: () {
             if (!snap.hasData) return;
             Navigator.of(context).push(
