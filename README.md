@@ -1,16 +1,96 @@
-# modchat_mvp
+# 🚀 ModChat — A Modern Moderated Messaging Platform
 
-A new Flutter project.
+> **ModChat** is a next-generation real-time messaging application designed with **content control, moderation, and performance** at its core.  
+Built as a **Final Year Project (FYP)**, ModChat combines modern UI/UX, secure backend architecture, and scalable real-time communication.
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+## ✨ Why ModChat?
 
-A few resources to get you started if this is your first Flutter project:
+Traditional chat apps focus on speed — **ModChat focuses on responsibility**.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+✔ Smart moderation  
+✔ Secure messaging  
+✔ Real-time communication  
+✔ Elegant, modern UI  
+✔ Scalable architecture  
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+---
+
+## 📱 Key Features
+
+### 🔐 Authentication
+- Firebase Authentication (Email & Password)
+- Secure session handling
+- User-specific data isolation
+
+### 💬 Messaging
+- One-to-one direct messaging
+- Real-time updates using Firestore
+- Message delivery & seen indicators
+- Edit messages (with “Edited” label)
+- Delete for me / delete for everyone
+
+### 🎙 Voice Notes
+- In-app voice recording
+- Duration tracking
+- Play, pause, seek functionality
+- Clean waveform UI
+
+### 📎 Media & File Sharing
+- Images
+- Videos
+- PDFs
+- PPT / DOC / DOCX
+- ZIP / RAR
+- Stored securely using **Supabase Storage**
+- Preview & download support
+
+### 🛡 Moderation & Safety
+- Message-level moderation logic
+- User-level message hiding
+- Safe fallbacks when permissions fail
+- Designed for scalable moderation rules
+
+### ⚙ Settings
+- Edit bio
+- Update profile
+- Persistent user preferences
+
+---
+
+## 🎨 UI / UX Philosophy
+
+- **White** base for clarity  
+- **Dark navy blue** for structure  
+- **Electric blue accents** for emphasis  
+- Glassmorphism containers  
+- Smooth animations  
+- Minimal, modern typography  
+- Compact, elegant components (no bulky UI)
+
+Designed to feel **premium, calm, and professional**.
+
+---
+
+## 🏗 Architecture Overview
+
+- **Flutter** — Cross-platform frontend
+- **Riverpod** — State management
+- **Firebase Auth** — Authentication
+- **Cloud Firestore** — Real-time database
+- **Supabase Storage** — Media & file storage
+- **WebRTC (planned/partial)** — Real-time communication
+- **Modular & Layered Architecture**
+
+📌 Clean separation of:
+- UI
+- Providers
+- Services
+- Models
+- Business logic
+
+---
+
+## 📂 Project Structure (Simplified)
+
