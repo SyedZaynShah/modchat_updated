@@ -3,43 +3,51 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class AppColors {
-  static const Color sinopia = Color(0xFF00AFFF); // electric blue accent
-  static const Color navy = Color(0xFF0A1A3A);
-  static const Color background = Colors.white;
-  static const Color surface = Color(0xFFF7F7F7);
+  // Ocean-blue palette
+  static const Color background = Color(0xFF011C40); // primary app background
+  static const Color surface =
+      Colors.white; // secondary surfaces, receiver bubbles
+  static const Color glass = Color(0xFF011C40); // glass panels (55-70% opacity)
+  static const Color navy = Color(
+    0xFF011C40,
+  ); // primary accent (sender, active icons, buttons)
+  static const Color highlight = Colors.white; // main text, glow
+  static const Color sinopia = Colors.white; // align legacy uses with accent
   static const Color white = Colors.white;
 }
 
 class AppTheme {
   static ThemeData get theme {
-    final base = ThemeData.light(useMaterial3: true);
+    final base = ThemeData.dark(useMaterial3: true);
     return base.copyWith(
       primaryColor: AppColors.navy,
       colorScheme: base.colorScheme.copyWith(
         primary: AppColors.navy,
-        secondary: AppColors.sinopia,
-        surface: AppColors.white,
+        secondary: AppColors.navy,
+        surface: AppColors.surface,
+        background: AppColors.background,
         onPrimary: AppColors.white,
         onSecondary: AppColors.white,
+        onSurface: AppColors.white,
       ),
       scaffoldBackgroundColor: AppColors.background,
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
-        foregroundColor: AppColors.navy,
+        foregroundColor: AppColors.highlight, // title icons default to light
         elevation: 0,
-        centerTitle: true,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        centerTitle: false,
       ),
-      textTheme: GoogleFonts.interTextTheme(
-        base.textTheme,
-      ).apply(bodyColor: AppColors.navy, displayColor: AppColors.navy),
-      inputDecorationTheme: const InputDecorationTheme(
-        filled: true,
-        fillColor: Colors.white70,
-        labelStyle: TextStyle(color: AppColors.navy, fontSize: 14),
-        hintStyle: TextStyle(
-          color: AppColors.navy, // use opacity at call sites if needed
-          fontSize: 14,
-        ),
+      textTheme: GoogleFonts.interTextTheme(base.textTheme).apply(
+        bodyColor: AppColors.highlight,
+        displayColor: AppColors.highlight,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: false,
+        fillColor: Colors.transparent,
+        labelStyle: const TextStyle(color: Colors.black, fontSize: 14),
+        hintStyle: const TextStyle(color: Colors.black, fontSize: 14),
         prefixIconColor: AppColors.navy,
         border: InputBorder.none,
         enabledBorder: InputBorder.none,
@@ -54,31 +62,29 @@ class AppTheme {
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           ),
           overlayColor: MaterialStateProperty.resolveWith(
-            (s) => AppColors.sinopia.withValues(
-              alpha: s.contains(MaterialState.pressed) ? 0.25 : 0.12,
+            (s) => AppColors.white.withOpacity(
+              s.contains(MaterialState.pressed) ? 0.16 : 0.08,
             ),
           ),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
-          foregroundColor: MaterialStateProperty.all(AppColors.sinopia),
+          foregroundColor: MaterialStateProperty.all(AppColors.navy),
           textStyle: MaterialStateProperty.resolveWith(
-            (s) => TextStyle(
-              decoration: s.contains(MaterialState.hovered)
-                  ? TextDecoration.underline
-                  : TextDecoration.none,
+            (s) => const TextStyle(
+              decoration: TextDecoration.none,
               fontSize: 14,
               fontWeight: FontWeight.w500,
             ),
           ),
           overlayColor: MaterialStateProperty.all(
-            AppColors.sinopia.withValues(alpha: 0.08),
+            AppColors.navy.withOpacity(0.08),
           ),
         ),
       ),
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: AppColors.sinopia,
+        backgroundColor: AppColors.navy,
         foregroundColor: AppColors.white,
       ),
     );
@@ -88,29 +94,15 @@ class AppTheme {
     double radius = 16,
     bool glow = true,
   }) => BoxDecoration(
-    color: Colors.white.withValues(alpha: 0.2),
+    color: Colors.black.withOpacity(0.0), // no tinted glass color
     borderRadius: BorderRadius.circular(radius),
-    border: const Border(top: BorderSide(color: AppColors.sinopia, width: 3)),
-    boxShadow: glow
-        ? [
-            BoxShadow(
-              color: AppColors.navy,
-              blurRadius: 20,
-              offset: Offset(0, 6),
-              spreadRadius: 0.0,
-            ),
-            BoxShadow(
-              color: AppColors.sinopia,
-              blurRadius: 24,
-              spreadRadius: 1.0,
-            ),
-          ]
-        : [],
+    border: Border.all(color: AppColors.navy.withOpacity(0.0), width: 0),
+    boxShadow: glow ? [] : [],
   );
 
   static Widget glass({
     required Widget child,
-    double sigma = 20,
+    double sigma = 14,
     double radius = 16,
   }) {
     return ClipRRect(

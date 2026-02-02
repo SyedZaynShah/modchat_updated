@@ -91,8 +91,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             shape: BoxShape.circle,
                             gradient: RadialGradient(
                               colors: [
-                                kAccentBlue.withOpacity(0.22),
-                                kAccentBlue.withOpacity(0.0),
+                                AppColors.background.withOpacity(0.22),
+                                AppColors.background.withOpacity(0.0),
                               ],
                             ),
                           ),
@@ -109,7 +109,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             borderRadius: BorderRadius.circular(20),
                             border: const Border(
                               top: BorderSide(
-                                color: AppColors.sinopia,
+                                color: AppColors.background,
                                 width: 3,
                               ),
                             ),
@@ -138,7 +138,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 'Welcome back',
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: AppColors.sinopia,
+                                  color: Colors.black,
                                 ),
                               ),
                               const SizedBox(height: 18),
@@ -165,7 +165,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 Text(
                                   _error!,
                                   style: const TextStyle(
-                                    color: Colors.redAccent,
+                                    color: Colors.black,
                                     fontSize: 12.5,
                                   ),
                                 ),
@@ -193,8 +193,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
         child: OutlinedButton(
           style: OutlinedButton.styleFrom(
-            side: const BorderSide(color: AppColors.sinopia, width: 1.5),
-            foregroundColor: AppColors.sinopia,
+            side: const BorderSide(color: AppColors.navy, width: 1.5),
+            foregroundColor: AppColors.navy,
             minimumSize: const Size.fromHeight(48),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),

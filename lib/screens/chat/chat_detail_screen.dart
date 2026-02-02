@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -33,6 +34,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   // typing state no longer used for VN visibility (handled inside InputField)
   int _lastCount = 0;
   bool _didInitialScroll = false;
+  // Pinch-to-zoom state for text message bubbles only
+  double _baseZoom = 1.0;
+  static const double _minZoom = 1.0;
+  static const double _maxZoom = 1.6; // ~2-4pt larger than base
 
   @override
   void initState() {
@@ -108,119 +113,130 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   ) async {
     showModalBottomSheet(
       context: context,
+      backgroundColor: Colors.transparent,
       builder: (ctx) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (isMe && m.messageType == MessageType.text)
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('Edit'),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    final controller = TextEditingController(
-                      text: m.text ?? '',
-                    );
-                    final newText = await showDialog<String>(
-                      context: context,
-                      builder: (dCtx) => AlertDialog(
-                        title: const Text('Edit message'),
-                        content: TextField(
-                          controller: controller,
-                          maxLines: 5,
-                          minLines: 1,
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(dCtx),
-                            child: const Text('Cancel'),
+          child: AppTheme.glass(
+            sigma: 14,
+            radius: 20,
+            child: Container(
+              decoration: AppTheme.glassDecoration(radius: 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isMe && m.messageType == MessageType.text)
+                    ListTile(
+                      leading: const Icon(Icons.edit),
+                      title: const Text('Edit'),
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        final controller = TextEditingController(
+                          text: m.text ?? '',
+                        );
+                        final newText = await showDialog<String>(
+                          context: context,
+                          builder: (dCtx) => AlertDialog(
+                            title: const Text('Edit message'),
+                            content: TextField(
+                              controller: controller,
+                              maxLines: 5,
+                              minLines: 1,
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(dCtx),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(dCtx, controller.text.trim()),
+                                child: const Text('Save'),
+                              ),
+                            ],
                           ),
-                          TextButton(
-                            onPressed: () =>
-                                Navigator.pop(dCtx, controller.text.trim()),
-                            child: const Text('Save'),
-                          ),
-                        ],
-                      ),
-                    );
-                    if (newText != null && newText.isNotEmpty) {
+                        );
+                        if (newText != null && newText.isNotEmpty) {
+                          try {
+                            await ref
+                                .read(chatServiceProvider)
+                                .editMessage(
+                                  chatId: widget.chatId,
+                                  messageId: m.id,
+                                  newText: newText,
+                                );
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Message edited')),
+                              );
+                            }
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Edit failed: $e')),
+                              );
+                            }
+                          }
+                        }
+                      },
+                    ),
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline),
+                    title: const Text('Delete for me'),
+                    onTap: () async {
+                      Navigator.pop(ctx);
                       try {
                         await ref
                             .read(chatServiceProvider)
-                            .editMessage(
+                            .deleteForMe(
                               chatId: widget.chatId,
                               messageId: m.id,
-                              newText: newText,
                             );
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Message edited')),
+                            const SnackBar(content: Text('Removed for you')),
                           );
                         }
                       } catch (e) {
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Edit failed: $e')),
+                            SnackBar(content: Text('Delete failed: $e')),
                           );
                         }
                       }
-                    }
-                  },
-                ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline),
-                title: const Text('Delete for me'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  try {
-                    await ref
-                        .read(chatServiceProvider)
-                        .deleteForMe(chatId: widget.chatId, messageId: m.id);
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Removed for you')),
-                      );
-                    }
-                  } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Delete failed: $e')),
-                      );
-                    }
-                  }
-                },
+                    },
+                  ),
+                  if (isMe)
+                    ListTile(
+                      leading: const Icon(Icons.delete_forever),
+                      title: const Text('Delete for everyone'),
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        try {
+                          await ref
+                              .read(chatServiceProvider)
+                              .deleteForEveryone(
+                                chatId: widget.chatId,
+                                messageId: m.id,
+                              );
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Message deleted for everyone'),
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Delete failed: $e')),
+                            );
+                          }
+                        }
+                      },
+                    ),
+                ],
               ),
-              if (isMe)
-                ListTile(
-                  leading: const Icon(Icons.delete_forever),
-                  title: const Text('Delete for everyone'),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    try {
-                      await ref
-                          .read(chatServiceProvider)
-                          .deleteForEveryone(
-                            chatId: widget.chatId,
-                            messageId: m.id,
-                          );
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Message deleted for everyone'),
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Delete failed: $e')),
-                        );
-                      }
-                    }
-                  },
-                ),
-            ],
+            ),
           ),
         );
       },
@@ -233,21 +249,27 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     final messages = ref.watch(messagesProvider(widget.chatId));
     final hides = ref.watch(hidesProvider(widget.chatId));
 
+    final bubbleZoom = bubbleZoomStore[widget.chatId] ?? 1.0;
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: _PeerTitle(peerId: widget.peerId, chatId: widget.chatId),
         centerTitle: false,
         automaticallyImplyLeading: true,
-        iconTheme: const IconThemeData(color: AppColors.navy, size: 18),
+        iconTheme: const IconThemeData(color: AppColors.highlight, size: 18),
         titleSpacing: 0,
         leadingWidth: 40,
+        flexibleSpace: AppTheme.glass(
+          sigma: 14,
+          radius: 0,
+          child: Container(color: Colors.transparent),
+        ),
         actions: [
           IconButton(
             onPressed: () {},
             icon: const Icon(
               Icons.videocam_outlined,
-              color: AppColors.navy,
+              color: AppColors.highlight,
               size: 18,
             ),
           ),
@@ -255,11 +277,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             onPressed: () {},
             icon: const Icon(
               Icons.call_outlined,
-              color: AppColors.navy,
+              color: AppColors.highlight,
               size: 18,
             ),
           ),
           PopupMenuButton<String>(
+            icon: const Icon(
+              Icons.more_vert,
+              color: AppColors.highlight,
+              size: 18,
+            ),
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'contact', child: Text('Contact info')),
               PopupMenuItem(value: 'report', child: Text('Report')),
@@ -280,26 +307,22 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 );
               }
             },
-            icon: const Icon(Icons.more_vert, color: AppColors.navy, size: 18),
           ),
         ],
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
-        ),
-        bottom: const PreferredSize(
-          preferredSize: Size.fromHeight(3),
-          child: SizedBox(
-            height: 3,
-            child: DecoratedBox(
-              decoration: BoxDecoration(color: AppColors.sinopia),
-            ),
-          ),
-        ),
       ),
       body: Stack(
         fit: StackFit.expand,
         children: [
-          Image.asset('lib/assets/background.png', fit: BoxFit.cover),
+          // Blurred wallpaper background
+          Positioned.fill(
+            child: ImageFiltered(
+              imageFilter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+              child: Image.asset(
+                'lib/assets/background.png',
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
           SafeArea(
             child: Column(
               children: [
@@ -335,28 +358,51 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                         });
                         setState(() => _didInitialScroll = true);
                       }
-                      return ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
-                        ),
-                        itemCount: filtered.length,
-                        itemBuilder: (context, index) {
-                          final m = filtered[index];
-                          final isMe = m.senderId == me;
-                          return GestureDetector(
-                            key: ValueKey(m.id),
-                            onLongPress: () =>
-                                _onMessageLongPress(context, m, isMe),
-                            child: Align(
-                              alignment: isMe
-                                  ? Alignment.centerRight
-                                  : Alignment.centerLeft,
-                              child: MessageBubble(message: m, isMe: isMe),
-                            ),
-                          );
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onScaleStart: (details) {
+                          _baseZoom = bubbleZoomStore[widget.chatId] ?? 1.0;
                         },
+                        onScaleUpdate: (details) {
+                          final s = details.scale;
+                          if (details.pointerCount >= 2 || s != 1.0) {
+                            final scaled = (_baseZoom * s)
+                                .clamp(_minZoom, _maxZoom)
+                                .toDouble();
+                            final cur = bubbleZoomStore[widget.chatId] ?? 1.0;
+                            if (scaled != cur) {
+                              bubbleZoomStore[widget.chatId] = scaled;
+                              setState(() {});
+                            }
+                          }
+                        },
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 12,
+                          ),
+                          itemCount: filtered.length,
+                          itemBuilder: (context, index) {
+                            final m = filtered[index];
+                            final isMe = m.senderId == me;
+                            return GestureDetector(
+                              key: ValueKey(m.id),
+                              onLongPress: () =>
+                                  _onMessageLongPress(context, m, isMe),
+                              child: Align(
+                                alignment: isMe
+                                    ? Alignment.centerRight
+                                    : Alignment.centerLeft,
+                                child: MessageBubble(
+                                  message: m,
+                                  isMe: isMe,
+                                  zoom: bubbleZoom,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       );
                     },
                     loading: () =>
@@ -464,14 +510,35 @@ class _PeerTitle extends ConsumerWidget {
               ),
             ),
             const SizedBox(width: 6),
-            Text(
-              u?.name.isNotEmpty == true ? u!.name : peerId,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                color: AppColors.navy,
-                fontSize: 14,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    u?.name.isNotEmpty == true ? u!.name : peerId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.highlight, // #E1F8FA
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Tap for info',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.navy.withOpacity(
+                        0.75,
+                      ), // #54ACBF at reduced opacity
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

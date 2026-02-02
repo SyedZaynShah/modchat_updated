@@ -506,10 +506,7 @@ class _InputFieldState extends State<InputField> {
               if (_locked) ...[
                 IconButton(
                   onPressed: _cancelRec,
-                  icon: const Icon(
-                    Icons.delete_outline,
-                    color: Colors.redAccent,
-                  ),
+                  icon: const Icon(Icons.delete_outline, color: Colors.black),
                 ),
                 IconButton(
                   onPressed: _finishRecSend,
@@ -528,7 +525,7 @@ class _InputFieldState extends State<InputField> {
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 12),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: Color(0xFFF7F7F7),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(28),
         border: Border.all(color: AppColors.navy, width: 1.5),
       ),

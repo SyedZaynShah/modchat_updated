@@ -150,7 +150,7 @@ class _AudioRecorderWidgetState extends State<AudioRecorderWidget> {
           onLongPressEnd: (_) => _stopRecAndConfirm(),
           child: Icon(
             _recording ? Icons.mic : Icons.mic,
-            color: _recording ? Colors.redAccent : Color(0xFF1E1E1E),
+            color: Colors.black,
             size: 24,
           ),
         ),
@@ -169,7 +169,7 @@ class _AudioRecorderWidgetState extends State<AudioRecorderWidget> {
                     child: FractionallySizedBox(
                       widthFactor: 0.2 + 0.8 * _amp,
                       child: Container(
-                        color: Colors.redAccent.withValues(alpha: 0.7),
+                        color: Colors.black.withValues(alpha: 0.7),
                       ),
                     ),
                   ),
@@ -180,7 +180,7 @@ class _AudioRecorderWidgetState extends State<AudioRecorderWidget> {
           const SizedBox(width: 6),
           Text(
             _fmt(elapsed),
-            style: const TextStyle(fontSize: 12, color: Color(0xFF1E1E1E)),
+            style: const TextStyle(fontSize: 12, color: Colors.black),
           ),
         ],
       ],

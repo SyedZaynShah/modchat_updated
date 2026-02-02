@@ -104,8 +104,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                             shape: BoxShape.circle,
                             gradient: RadialGradient(
                               colors: [
-                                AppColors.sinopia.withOpacity(0.18),
-                                AppColors.sinopia.withOpacity(0.0),
+                                AppColors.background.withOpacity(0.18),
+                                AppColors.background.withOpacity(0.0),
                               ],
                             ),
                           ),
@@ -122,7 +122,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                             borderRadius: BorderRadius.circular(20),
                             border: const Border(
                               top: BorderSide(
-                                color: AppColors.sinopia,
+                                color: AppColors.background,
                                 width: 3,
                               ),
                             ),
@@ -151,7 +151,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                 'Join ModChat',
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: AppColors.sinopia,
+                                  color: Colors.black,
                                 ),
                               ),
                               const SizedBox(height: 18),
@@ -193,7 +193,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                 Text(
                                   _error!,
                                   style: const TextStyle(
-                                    color: Colors.redAccent,
+                                    color: Colors.black,
                                     fontSize: 12.5,
                                   ),
                                 ),

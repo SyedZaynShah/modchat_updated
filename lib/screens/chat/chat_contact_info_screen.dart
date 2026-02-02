@@ -57,8 +57,9 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
   Widget build(BuildContext context) {
     final user = ref.watch(userDocProvider(widget.peerId));
     final messages = ref.watch(messagesProvider(widget.chatId));
+    final bubbleZoom = bubbleZoomStore[widget.chatId] ?? 1.0;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.white,
       appBar: AppBar(
         title: const Text(
           'Contact info',
@@ -78,7 +79,7 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
           child: SizedBox(
             height: 3,
             child: DecoratedBox(
-              decoration: BoxDecoration(color: AppColors.sinopia),
+              decoration: BoxDecoration(color: AppColors.navy),
             ),
           ),
         ),
@@ -96,7 +97,11 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                     radius: 44,
                     backgroundImage: snap.data,
                     child: snap.data == null
-                        ? const Icon(Icons.person, size: 44)
+                        ? const Icon(
+                            Icons.person,
+                            size: 44,
+                            color: AppColors.navy,
+                          )
                         : null,
                   ),
                 ),
@@ -273,6 +278,7 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                               name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: AppColors.navy),
                             ),
                             trailing: const Icon(
                               Icons.open_in_new,
@@ -310,6 +316,7 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                               t,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: AppColors.navy),
                             ),
                           );
                         },
@@ -328,7 +335,7 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                       child: Text(
                         '$e',
                         style: const TextStyle(
-                          color: Colors.redAccent,
+                          color: Colors.black,
                           fontSize: 12,
                         ),
                       ),
@@ -336,6 +343,64 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                   ),
                 ),
                 const SizedBox(height: 30),
+                // Bubble size slider (controls chat bubble zoom)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Chat bubble size',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.navy,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 4,
+                    activeTrackColor: AppColors.navy,
+                    inactiveTrackColor: Colors.black54,
+                    thumbColor: AppColors.navy,
+                    overlayColor: AppColors.navy.withOpacity(0.12),
+                    valueIndicatorColor: AppColors.navy,
+                    valueIndicatorTextStyle: const TextStyle(
+                      color: Colors.white,
+                    ),
+                  ),
+                  child: Slider(
+                    min: 1.0,
+                    max: 1.6,
+                    divisions: 12,
+                    label: bubbleZoom.toStringAsFixed(2) + 'x',
+                    value: bubbleZoom.clamp(1.0, 1.6),
+                    onChanged: (v) {
+                      setState(() {
+                        bubbleZoomStore[widget.chatId] = v;
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.navy, width: 1.2),
+                  ),
+                  child: Text(
+                    'Current size: ' + bubbleZoom.toStringAsFixed(2) + 'x',
+                    style: const TextStyle(
+                      color: AppColors.navy,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
                 const Divider(height: 24),
                 Material(
                   color: Colors.transparent,
@@ -374,10 +439,7 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                     splashColor: AppColors.navy.withOpacity(0.08),
                     highlightColor: AppColors.navy.withOpacity(0.06),
                     child: const ListTile(
-                      leading: Icon(
-                        Icons.delete_forever,
-                        color: Colors.redAccent,
-                      ),
+                      leading: Icon(Icons.delete_forever, color: Colors.red),
                       title: Text(
                         'Delete chat',
                         style: TextStyle(
@@ -415,7 +477,7 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
             height: 2,
             width: 26,
             decoration: BoxDecoration(
-              color: selected ? AppColors.sinopia : Colors.transparent,
+              color: selected ? AppColors.navy : Colors.transparent,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -429,7 +491,7 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
     child: Center(
       child: Text(
         text,
-        style: const TextStyle(color: Colors.black45, fontSize: 12),
+        style: const TextStyle(color: AppColors.navy, fontSize: 12),
       ),
     ),
   );
@@ -459,8 +521,8 @@ class _NotchedActionsBar extends StatelessWidget {
     final notch = avatarRadius + gap;
     // Place content ~1.5 lines below the bottom of the circular notch
     final topInset = notch + 28;
-    return SizedBox(
-      height: height,
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: height),
       child: CustomPaint(
         painter: _ActionsBarPainter(
           color: AppColors.navy,
@@ -490,8 +552,7 @@ class _NotchedActionsBar extends StatelessWidget {
                 Text(
                   subtitle,
                   textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                  softWrap: true,
                   style: const TextStyle(color: Colors.white70, fontSize: 13),
                 ),
               ],
@@ -506,6 +567,8 @@ class _NotchedActionsBar extends StatelessWidget {
                   const SizedBox(width: 26),
                   PopupMenuButton<String>(
                     tooltip: 'More',
+                    offset: const Offset(0, 8),
+                    position: PopupMenuPosition.under,
                     icon: const Icon(
                       Icons.more_vert_rounded,
                       color: Colors.white,
@@ -513,8 +576,20 @@ class _NotchedActionsBar extends StatelessWidget {
                     ),
                     color: Colors.white,
                     itemBuilder: (context) => const [
-                      PopupMenuItem(value: 'block', child: Text('Block')),
-                      PopupMenuItem(value: 'report', child: Text('Report')),
+                      PopupMenuItem(
+                        value: 'block',
+                        child: Text(
+                          'Block',
+                          style: TextStyle(color: Colors.black),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'report',
+                        child: Text(
+                          'Report',
+                          style: TextStyle(color: Colors.black),
+                        ),
+                      ),
                     ],
                     onSelected: (v) {
                       ScaffoldMessenger.of(context).showSnackBar(

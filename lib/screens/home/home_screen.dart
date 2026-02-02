@@ -146,24 +146,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final chatList = ref.watch(chatListProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppColors.white,
       appBar: AppBar(
         centerTitle: false,
         title: Text(
-          _titles[_currentIndex],
+          _currentIndex == 0 ? 'ModChat' : _titles[_currentIndex],
           style: const TextStyle(
-            fontWeight: FontWeight.w700,
-            color: AppColors.navy,
+            fontWeight: FontWeight.w800,
+            color: AppColors.background,
           ),
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.camera_alt_outlined, color: AppColors.navy),
+            icon: const Icon(
+              Icons.camera_alt_outlined,
+              color: AppColors.background,
+            ),
             onPressed: _openCamera,
             tooltip: 'Camera',
           ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: AppColors.navy),
+            icon: const Icon(Icons.more_vert, color: AppColors.background),
             onSelected: _onMenuSelected,
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'new_group', child: Text('New group')),
@@ -193,34 +196,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 padding: const EdgeInsets.all(12.0),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.navy, width: 1.5),
+                    color: Colors.black.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(24),
                   ),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 0,
+                    horizontal: 12,
+                    vertical: 2,
                   ),
                   child: TextField(
                     controller: _chatSearchController,
                     onChanged: (_) => setState(() {}),
                     textAlignVertical: TextAlignVertical.center,
-                    decoration: const InputDecoration(
+                    style: const TextStyle(color: Colors.black),
+                    decoration: InputDecoration(
                       isDense: true,
                       border: InputBorder.none,
-                      prefixIcon: Icon(
+                      prefixIcon: const Icon(
                         Icons.search,
-                        color: AppColors.navy,
+                        color: AppColors.background,
                         size: 20,
                       ),
-                      prefixIconConstraints: BoxConstraints(
+                      prefixIconConstraints: const BoxConstraints(
                         minWidth: 32,
                         minHeight: 32,
                       ),
-                      contentPadding: EdgeInsets.symmetric(vertical: 0),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
                       filled: true,
                       fillColor: Colors.transparent,
                       hintText: 'Search chats',
+                      hintStyle: const TextStyle(color: Colors.black),
                     ),
                   ),
                 ),
@@ -232,7 +236,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       return const Center(
                         child: Text(
                           'No chats yet',
-                          style: TextStyle(color: Colors.white70),
+                          style: TextStyle(color: AppColors.background),
                         ),
                       );
                     }
@@ -268,7 +272,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   error: (e, _) => Center(
                     child: Text(
                       'Error: $e',
-                      style: const TextStyle(color: Colors.redAccent),
+                      style: const TextStyle(color: Colors.black),
                     ),
                   ),
                 ),
@@ -287,8 +291,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.navy,
-        foregroundColor: AppColors.white,
+        backgroundColor: AppColors.background,
+        foregroundColor: AppColors.highlight,
         child: const Icon(Icons.add),
         onPressed: () {
           Navigator.of(
@@ -317,9 +321,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           curve: Curves.easeInOutCubicEmphasized,
         );
       },
-      barColor: AppColors.navy,
-      iconColor: AppColors.white,
-      activeIconColor: AppColors.navy,
+      barColor: AppColors.background,
+      iconColor: AppColors.highlight,
+      activeIconColor: AppColors.background,
       cornerRadius: 20,
       height: 74,
     );
@@ -332,12 +336,12 @@ extension on _HomeScreenState {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 64, color: AppColors.navy.withOpacity(0.6)),
+          Icon(icon, size: 64, color: AppColors.background),
           const SizedBox(height: 12),
           Text(
             text,
             style: const TextStyle(
-              color: AppColors.navy,
+              color: AppColors.background,
               fontSize: 16,
               fontWeight: FontWeight.w600,
             ),
@@ -391,30 +395,29 @@ class _ChatListTile extends ConsumerWidget {
             splashColor: AppColors.navy.withOpacity(0.08),
             highlightColor: AppColors.navy.withOpacity(0.06),
             child: ListTile(
-              dense: true,
-              visualDensity: const VisualDensity(vertical: -2),
               contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 2,
+                horizontal: 16,
+                vertical: 4,
               ),
               title: Text(
                 u?.name.isNotEmpty == true ? u!.name : peerId,
                 style: const TextStyle(
-                  color: AppColors.navy,
+                  color: Colors.black,
                   fontWeight: FontWeight.w700,
-                  fontSize: 13.5,
+                  fontSize: 15,
                 ),
               ),
               subtitle: Text(
                 last ?? '',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.black),
               ),
               trailing: time != null
                   ? Text(
                       _formatTime(time!),
                       style: const TextStyle(
-                        color: AppColors.navy,
+                        color: Colors.black,
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
@@ -427,7 +430,10 @@ class _ChatListTile extends ConsumerWidget {
                     : null,
                 child: (u?.profileImageUrl?.isNotEmpty == true)
                     ? null
-                    : const Icon(Icons.person, color: Colors.white70),
+                    : Icon(
+                        Icons.person,
+                        color: AppColors.white.withOpacity(0.7),
+                      ),
               ),
             ),
           ),

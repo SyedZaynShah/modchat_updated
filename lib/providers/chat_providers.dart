@@ -55,3 +55,6 @@ final hiddenChatsProvider = StreamProvider<Set<String>>((ref) {
     return list.toSet();
   });
 });
+
+// Per-chat message bubble zoom factors map: {chatId: zoom}. Default 1.0 when absent.
+final Map<String, double> bubbleZoomStore = <String, double>{};

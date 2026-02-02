@@ -97,14 +97,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         title: Row(
           children: [
             IconButton(
-              icon: const Icon(Icons.arrow_back, color: AppColors.navy),
+              icon: const Icon(Icons.arrow_back, color: AppColors.white),
               onPressed: () => Navigator.pop(context),
             ),
             const SizedBox(width: 4),
             const Text(
               'Settings',
               style: TextStyle(
-                color: AppColors.navy,
+                color: AppColors.white,
                 fontWeight: FontWeight.w800,
                 fontSize: 20,
               ),
@@ -114,7 +114,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         actions: const [
           Padding(
             padding: EdgeInsets.only(right: 6.0),
-            child: Icon(Icons.search, color: AppColors.navy),
+            child: Icon(Icons.search, color: AppColors.white),
           ),
         ],
       ),
@@ -183,9 +183,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          (user?.name?.isNotEmpty == true) ? user!.name : uid,
+                          (user?.name.isNotEmpty == true) ? user!.name : uid,
                           style: const TextStyle(
-                            color: AppColors.navy,
+                            color: AppColors.white,
                             fontWeight: FontWeight.w800,
                             fontSize: 16,
                           ),
@@ -245,7 +245,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                           ? user!.about!
                                           : 'Add a bio',
                                       style: TextStyle(
-                                        color: AppColors.navy.withOpacity(0.6),
+                                        color: AppColors.white.withOpacity(0.7),
                                       ),
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
@@ -258,9 +258,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                       _editingBio = true;
                                     }),
                                     style: OutlinedButton.styleFrom(
-                                      foregroundColor: AppColors.navy,
+                                      foregroundColor: AppColors.white,
                                       side: const BorderSide(
-                                        color: AppColors.navy,
+                                        color: AppColors.white,
                                       ),
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(12),
@@ -379,11 +379,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   splashColor: AppColors.navy.withOpacity(0.08),
                   highlightColor: AppColors.navy.withOpacity(0.06),
                   child: const ListTile(
-                    leading: Icon(Icons.logout, color: Colors.redAccent),
+                    leading: Icon(Icons.logout, color: Colors.white),
                     title: Text(
                       'Logout',
                       style: TextStyle(
-                        color: AppColors.navy,
+                        color: AppColors.white,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -395,10 +395,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         },
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(
-          child: Text(
-            'Error: $e',
-            style: const TextStyle(color: Colors.redAccent),
-          ),
+          child: Text('Error: $e', style: const TextStyle(color: Colors.white)),
         ),
       ),
     );
@@ -417,19 +414,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         splashColor: AppColors.navy.withOpacity(0.08),
         highlightColor: AppColors.navy.withOpacity(0.06),
         child: ListTile(
-          leading: Icon(icon, color: AppColors.navy),
+          leading: Icon(icon, color: AppColors.white),
           title: Text(
             title,
             style: const TextStyle(
-              color: AppColors.navy,
+              color: AppColors.white,
               fontWeight: FontWeight.w800,
             ),
           ),
           subtitle: Text(
             subtitle,
-            style: TextStyle(color: AppColors.navy.withOpacity(0.6)),
+            style: TextStyle(color: AppColors.white.withOpacity(0.7)),
           ),
-          trailing: const Icon(Icons.chevron_right, color: AppColors.navy),
+          trailing: const Icon(Icons.chevron_right, color: AppColors.white),
         ),
       ),
     );

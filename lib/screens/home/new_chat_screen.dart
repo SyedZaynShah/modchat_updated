@@ -140,7 +140,7 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
               error: (e, _) => Center(
                 child: Text(
                   'Error: $e',
-                  style: const TextStyle(color: Colors.redAccent),
+                  style: const TextStyle(color: Colors.black),
                 ),
               ),
             ),
@@ -161,8 +161,7 @@ class _ToSearchBar extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.navy, width: 1.5),
+        borderRadius: BorderRadius.circular(24),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: Row(
@@ -170,7 +169,7 @@ class _ToSearchBar extends StatelessWidget {
           const Text(
             'To:',
             style: TextStyle(
-              color: AppColors.navy,
+              color: Colors.black,
               fontWeight: FontWeight.w800,
               fontSize: 14,
             ),
@@ -181,14 +180,15 @@ class _ToSearchBar extends StatelessWidget {
               controller: controller,
               onChanged: onChanged,
               textAlignVertical: TextAlignVertical.center,
-              decoration: const InputDecoration(
+              style: const TextStyle(color: Colors.black),
+              decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
-                contentPadding: EdgeInsets.symmetric(vertical: 0),
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
                 filled: true,
                 fillColor: Colors.transparent,
                 hintText: 'Search name or email',
-                hintStyle: TextStyle(color: Colors.black54),
+                hintStyle: const TextStyle(color: Colors.black),
               ),
             ),
           ),

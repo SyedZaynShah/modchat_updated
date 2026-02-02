@@ -229,9 +229,13 @@ class _WaveBarPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
+    final fillPaint = Paint()
       ..color = color
       ..style = PaintingStyle.fill;
+    final strokePaint = Paint()
+      ..color = AppColors.navy.withOpacity(0.12)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
 
     final w = size.width;
     final h = size.height;
@@ -263,7 +267,8 @@ class _WaveBarPainter extends CustomPainter {
     path.close();
 
     canvas.drawShadow(path, Colors.black.withOpacity(0.16), 12, false);
-    canvas.drawPath(path, paint);
+    canvas.drawPath(path, fillPaint);
+    canvas.drawPath(path, strokePaint);
   }
 
   @override

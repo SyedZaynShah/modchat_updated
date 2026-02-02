@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../theme/theme.dart';
 
 class ModChatSplashScreen extends StatefulWidget {
   const ModChatSplashScreen({super.key});
@@ -55,10 +56,10 @@ class _ModChatSplashScreenState extends State<ModChatSplashScreen>
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.55),
                   borderRadius: BorderRadius.circular(40),
-                  border: Border.all(color: const Color(0xff0096ff), width: 2),
+                  border: Border.all(color: AppColors.background, width: 2),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.blue.withOpacity(0.15),
+                      color: AppColors.background.withOpacity(0.15),
                       blurRadius: 30,
                       spreadRadius: 10,
                     ),
@@ -80,7 +81,7 @@ class _ModChatSplashScreenState extends State<ModChatSplashScreen>
               style: GoogleFonts.poppins(
                 fontSize: 32,
                 fontWeight: FontWeight.w600,
-                color: Colors.black87,
+                color: Colors.black,
               ),
             ),
 
@@ -91,7 +92,7 @@ class _ModChatSplashScreenState extends State<ModChatSplashScreen>
               style: GoogleFonts.poppins(
                 fontSize: 15,
                 fontWeight: FontWeight.w400,
-                color: Colors.black54,
+                color: Colors.black,
               ),
             ),
 
@@ -104,7 +105,7 @@ class _ModChatSplashScreenState extends State<ModChatSplashScreen>
                 height: 1.3,
                 fontSize: 14,
                 fontWeight: FontWeight.w400,
-                color: Colors.black45,
+                color: Colors.black,
               ),
             ),
           ],
