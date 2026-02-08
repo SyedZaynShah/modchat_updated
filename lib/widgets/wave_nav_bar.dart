@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../theme/theme.dart';
@@ -26,11 +25,11 @@ class WaveNavBar extends StatefulWidget {
     required this.currentIndex,
     required this.onTap,
     this.height = 70,
-    this.barColor = AppColors.navy,
-    this.iconColor = AppColors.white,
+    this.barColor = AppColors.surface,
+    this.iconColor = AppColors.iconMuted,
     this.activeIconColor = AppColors.navy,
     this.cornerRadius = 24,
-    this.duration = const Duration(milliseconds: 420),
+    this.duration = const Duration(milliseconds: 280),
   });
 
   @override
@@ -74,6 +73,28 @@ class _WaveNavBarState extends State<WaveNavBar>
     return tabWidth * (index + 0.5);
   }
 
+  double _delayedT(double t) {
+    final d = ((t - 0.16) / 0.84).clamp(0.0, 1.0);
+    return Curves.easeInOut.transform(d);
+  }
+
+  Widget _gradientIcon(IconData icon, double size, double opacity) {
+    return Opacity(
+      opacity: opacity,
+      child: ShaderMask(
+        blendMode: BlendMode.srcIn,
+        shaderCallback: (rect) {
+          return const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [AppColors.burgundy, Colors.white],
+          ).createShader(rect);
+        },
+        child: Icon(icon, size: size, color: Colors.white),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
@@ -87,63 +108,98 @@ class _WaveNavBarState extends State<WaveNavBar>
           return AnimatedBuilder(
             animation: _controller,
             builder: (context, child) {
-              final t = Curves.easeInOutCubicEmphasized.transform(
-                _controller.value,
-              );
+              final t = Curves.easeInOut.transform(_controller.value);
+              final iconT = _delayedT(_controller.value);
+
+              final count = widget.items.length;
+              final tabWidth = width / count;
 
               final fromX = _indexCenterX(_fromIndex, width);
               final toX = _indexCenterX(widget.currentIndex, width);
               final centerX = lerpDouble(fromX, toX, t)!;
 
-              final count = widget.items.length;
-              final tabWidth = width / count;
-
-              // 🔥 WIDER & SMOOTHER WAVE
-              final baseWaveWidth = tabWidth * 1.45;
-              final intendedWidth = baseWaveWidth + 8 * math.sin(t * math.pi);
-              final waveWidth = intendedWidth.clamp(
-                tabWidth * 1.35,
-                tabWidth * 1.55,
+              final indicatorWidth = (tabWidth * 0.58).clamp(30.0, 62.0);
+              final indicatorLeft = (centerX - indicatorWidth / 2).clamp(
+                0.0,
+                width - indicatorWidth,
               );
 
-              // 🔥 DEEPER DIP
-              final maxDepth = widget.height - 2.0;
-              final baseDepth = widget.height - 4.0;
-              final intendedDepth = baseDepth + 6 * math.sin(t * math.pi);
-              final depth = intendedDepth.clamp(0.0, maxDepth);
+              final radius = widget.cornerRadius.clamp(28.0, 32.0);
 
-              return ClipRRect(
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(widget.cornerRadius),
-                  topRight: Radius.circular(widget.cornerRadius),
-                ),
-                child: CustomPaint(
-                  painter: _WaveBarPainter(
-                    color: widget.barColor,
-                    centerX: centerX,
-                    waveWidth: waveWidth,
-                    depth: depth,
-                    cornerRadius: widget.cornerRadius,
-                  ),
-                  child: SafeArea(
-                    top: false,
-                    child: SizedBox(
-                      height: widget.height,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              return SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Container(
+                    height: widget.height,
+                    decoration: BoxDecoration(
+                      color: widget.barColor,
+                      borderRadius: BorderRadius.circular(radius),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.45),
+                          blurRadius: 38,
+                          spreadRadius: -18,
+                          offset: const Offset(0, 18),
+                        ),
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.20),
+                          blurRadius: 18,
+                          spreadRadius: -18,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                      border: Border.all(
+                        color: AppColors.outline.withOpacity(0.65),
+                        width: 1,
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(radius),
+                      child: Stack(
                         children: [
-                          for (int i = 0; i < widget.items.length; i++)
-                            _NavButton(
-                              item: widget.items[i],
-                              selected: i == widget.currentIndex,
-                              onTap: () => widget.onTap(i),
-                              iconColor: widget.iconColor,
-                              activeIconColor: widget.activeIconColor,
-                              lift:
-                                  -6 *
-                                  math.sin(t * math.pi) *
-                                  (i == widget.currentIndex ? 1 : 0),
+                          Positioned(
+                            top: 10,
+                            left: indicatorLeft,
+                            child: Container(
+                              width: indicatorWidth,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: AppColors.burgundy,
+                                borderRadius: BorderRadius.circular(99),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: AppColors.burgundySoftGlow,
+                                    blurRadius: 26,
+                                    spreadRadius: -16,
+                                    offset: Offset(0, 14),
+                                  ),
+                                  BoxShadow(
+                                    color: AppColors.burgundyFaintGlow,
+                                    blurRadius: 36,
+                                    spreadRadius: -26,
+                                    offset: Offset(0, 22),
+                                  ),
+                                ],
+                              ),
                             ),
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              for (int i = 0; i < widget.items.length; i++)
+                                _LampNavButton(
+                                  item: widget.items[i],
+                                  index: i,
+                                  fromIndex: _fromIndex,
+                                  toIndex: widget.currentIndex,
+                                  iconT: iconT,
+                                  onTap: () => widget.onTap(i),
+                                  iconColor: widget.iconColor,
+                                  activeGradientBuilder: _gradientIcon,
+                                ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
@@ -158,50 +214,92 @@ class _WaveNavBarState extends State<WaveNavBar>
   }
 }
 
-class _NavButton extends StatelessWidget {
+class _LampNavButton extends StatelessWidget {
   final WaveNavItem item;
-  final bool selected;
+  final int index;
+  final int fromIndex;
+  final int toIndex;
+  final double iconT;
   final VoidCallback onTap;
   final Color iconColor;
-  final Color activeIconColor;
-  final double lift;
+  final Widget Function(IconData icon, double size, double opacity)
+  activeGradientBuilder;
 
-  const _NavButton({
+  const _LampNavButton({
     required this.item,
-    required this.selected,
+    required this.index,
+    required this.fromIndex,
+    required this.toIndex,
+    required this.iconT,
     required this.onTap,
     required this.iconColor,
-    required this.activeIconColor,
-    required this.lift,
+    required this.activeGradientBuilder,
   });
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? activeIconColor : iconColor.withOpacity(0.92);
+    final isFrom = index == fromIndex;
+    final isTo = index == toIndex;
+
+    double activeOpacity = 0.0;
+    if (isTo) {
+      activeOpacity = iconT;
+    } else if (isFrom) {
+      activeOpacity = 1.0 - iconT;
+    } else {
+      activeOpacity = 0.0;
+    }
+
+    final inactiveOpacity = (isTo || isFrom) ? (1.0 - activeOpacity) : 0.93;
+
+    final labelOpacity = (isTo)
+        ? (0.70 + 0.30 * iconT)
+        : (isFrom)
+        ? (0.70 + 0.30 * (1.0 - iconT))
+        : 0.70;
+
     return Expanded(
       child: InkResponse(
         onTap: onTap,
-        splashColor: AppColors.white.withOpacity(0.08),
+        splashColor: Colors.transparent,
         highlightColor: Colors.transparent,
         radius: 36,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Transform.translate(
-                offset: Offset(0, lift),
-                child: Icon(item.icon, color: color, size: 26),
+              SizedBox(
+                height: 26,
+                width: 26,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Opacity(
+                      opacity: inactiveOpacity,
+                      child: Icon(
+                        item.icon,
+                        size: 24,
+                        color: iconColor.withOpacity(0.98),
+                      ),
+                    ),
+                    activeGradientBuilder(item.icon, 24, activeOpacity),
+                  ],
+                ),
               ),
               const SizedBox(height: 6),
-              Text(
-                item.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+              Opacity(
+                opacity: labelOpacity,
+                child: Text(
+                  item.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppColors.highlight.withOpacity(0.92),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.1,
+                  ),
                 ),
               ),
             ],
@@ -209,73 +307,5 @@ class _NavButton extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _WaveBarPainter extends CustomPainter {
-  final Color color;
-  final double centerX;
-  final double waveWidth;
-  final double depth;
-  final double cornerRadius;
-
-  _WaveBarPainter({
-    required this.color,
-    required this.centerX,
-    required this.waveWidth,
-    required this.depth,
-    required this.cornerRadius,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final fillPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill;
-    final strokePaint = Paint()
-      ..color = AppColors.navy.withOpacity(0.12)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-
-    final w = size.width;
-    final h = size.height;
-
-    final double start = (centerX - waveWidth / 2).clamp(0.0, w);
-    final double end = (centerX + waveWidth / 2).clamp(0.0, w);
-
-    final path = Path();
-    final bool atLeftEdge = start <= 0.0001;
-    final bool atRightEdge = end >= w - 0.0001;
-    final double startY = atLeftEdge ? depth : 0.0;
-    final double endY = atRightEdge ? depth : 0.0;
-
-    path.moveTo(0, startY);
-    path.lineTo(start, startY);
-
-    // 🔥 WIDER CONTROL POINTS
-    final double c1x = start + waveWidth * 0.40;
-    final double c2x = centerX - waveWidth * 0.35;
-    path.cubicTo(c1x, startY, c2x, depth, centerX, depth);
-
-    final double c3x = centerX + waveWidth * 0.35;
-    final double c4x = end - waveWidth * 0.40;
-    path.cubicTo(c3x, depth, c4x, endY, end, endY);
-
-    path.lineTo(w, endY);
-    path.lineTo(w, h);
-    path.lineTo(0, h);
-    path.close();
-
-    canvas.drawShadow(path, Colors.black.withOpacity(0.16), 12, false);
-    canvas.drawPath(path, fillPaint);
-    canvas.drawPath(path, strokePaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _WaveBarPainter oldDelegate) {
-    return oldDelegate.centerX != centerX ||
-        oldDelegate.waveWidth != waveWidth ||
-        oldDelegate.depth != depth ||
-        oldDelegate.color != color;
   }
 }

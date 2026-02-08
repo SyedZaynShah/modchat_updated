@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../providers/user_providers.dart';
+import '../../providers/auth_providers.dart';
 import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
 import '../../theme/theme.dart';
@@ -372,7 +373,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 color: Colors.transparent,
                 child: InkWell(
                   onTap: () async {
-                    await FirebaseAuth.instance.signOut();
+                    await ref.read(firebaseAuthServiceProvider).signOut();
                     if (!mounted) return;
                     Navigator.of(context).pop();
                   },

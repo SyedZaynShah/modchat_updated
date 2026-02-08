@@ -3,6 +3,9 @@ import '../models/user_model.dart';
 import 'auth_providers.dart';
 
 final userDocProvider = StreamProvider.family<ModUser?, String>((ref, uid) {
+  if (uid.isEmpty) return const Stream.empty();
+  final current = ref.watch(currentUserProvider);
+  if (current == null) return const Stream.empty();
   final fs = ref.watch(firestoreServiceProvider);
   return fs.users.doc(uid).snapshots().map((snap) {
     if (!snap.exists) return null;

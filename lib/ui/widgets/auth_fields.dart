@@ -52,23 +52,28 @@ class _CustomFieldState extends State<CustomField> {
       focusNode: _focus,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
+        curve: Curves.easeOutCubic,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.35),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [AppColors.cardTop, AppColors.cardBottom],
+          ),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: _focus.hasFocus
-                ? AppColors.navy
-                : AppColors.navy.withOpacity(0.6),
-            width: 1.5,
+                ? AppColors.outline.withOpacity(1.0)
+                : AppColors.outline.withOpacity(0.8),
+            width: 1,
           ),
           boxShadow: _focus.hasFocus
               ? [
                   BoxShadow(
-                    color: AppColors.navy.withOpacity(0.12),
-                    blurRadius: 18,
-                    spreadRadius: 1,
+                    color: AppColors.navy.withOpacity(0.10),
+                    blurRadius: 28,
+                    spreadRadius: -10,
+                    offset: const Offset(0, 16),
                   ),
                 ]
               : [],
@@ -82,7 +87,8 @@ class _CustomFieldState extends State<CustomField> {
           style: const TextStyle(
             fontSize: 14.0,
             height: 1.25,
-            color: Colors.black,
+            color: AppColors.highlight,
+            fontWeight: FontWeight.w500,
           ),
           decoration: InputDecoration(
             isDense: true,
@@ -91,16 +97,22 @@ class _CustomFieldState extends State<CustomField> {
             labelStyle: TextStyle(
               fontSize: 13,
               color: _focus.hasFocus
-                  ? AppColors.navy
-                  : AppColors.navy.withOpacity(0.7),
+                  ? AppColors.highlight.withOpacity(0.92)
+                  : AppColors.textSecondary,
             ),
             hintText: widget.hint,
             hintStyle: TextStyle(
               fontSize: 13,
-              color: Colors.white.withOpacity(0.85),
+              color: AppColors.textSecondary.withOpacity(0.85),
             ),
             prefixIcon: widget.prefixIcon != null
-                ? Icon(widget.prefixIcon, size: 18, color: AppColors.navy)
+                ? Icon(
+                    widget.prefixIcon,
+                    size: 18,
+                    color: _focus.hasFocus
+                        ? AppColors.highlight.withOpacity(0.92)
+                        : AppColors.iconMuted,
+                  )
                 : null,
             suffixIcon: widget.enableToggle
                 ? IconButton(
@@ -110,8 +122,8 @@ class _CustomFieldState extends State<CustomField> {
                           : Icons.visibility_outlined,
                       size: 18,
                       color: _focus.hasFocus
-                          ? AppColors.navy
-                          : AppColors.navy.withOpacity(0.55),
+                          ? AppColors.highlight.withOpacity(0.92)
+                          : AppColors.iconMuted.withOpacity(0.85),
                     ),
                     onPressed: () => setState(() => _obscure = !_obscure),
                   )

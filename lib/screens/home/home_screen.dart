@@ -9,9 +9,10 @@ import '../../providers/chat_providers.dart';
 import '../../providers/user_providers.dart';
 import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
+import '../../services/supabase_service.dart';
 import '../../theme/theme.dart';
 import '../../widgets/glass_button.dart';
-import '../../widgets/wave_nav_bar.dart';
+import '../../widgets/spotlight_nav_bar.dart';
 import '../chat/chat_detail_screen.dart';
 import 'new_chat_screen.dart';
 import '../settings/settings_screen.dart';
@@ -22,6 +23,55 @@ class HomeScreen extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _ResolvedAvatar extends StatelessWidget {
+  final String? url;
+  final double radius;
+  final IconData emptyIcon;
+
+  const _ResolvedAvatar({
+    required this.url,
+    this.radius = 20,
+    this.emptyIcon = Icons.person,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final raw = (url ?? '').trim();
+    if (raw.isEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: AppColors.sinopia.withValues(alpha: 0.25),
+        child: Icon(emptyIcon, color: AppColors.white.withOpacity(0.7)),
+      );
+    }
+
+    final fut = raw.contains('://')
+        ? Future.value(raw)
+        : SupabaseService.instance.resolveUrl(
+            bucket: StorageService().profileBucket,
+            path: raw,
+          );
+
+    return FutureBuilder<String>(
+      future: fut,
+      builder: (context, snap) {
+        final resolved = snap.data;
+        return CircleAvatar(
+          radius: radius,
+          backgroundColor: AppColors.sinopia.withValues(alpha: 0.25),
+          foregroundImage: (resolved != null && resolved.isNotEmpty)
+              ? NetworkImage(resolved)
+              : null,
+          onForegroundImageError: (_, __) {},
+          child: (resolved != null && resolved.isNotEmpty)
+              ? null
+              : Icon(emptyIcon, color: AppColors.white.withOpacity(0.7)),
+        );
+      },
+    );
+  }
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
@@ -146,27 +196,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final chatList = ref.watch(chatListProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.white,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         centerTitle: false,
         title: Text(
           _currentIndex == 0 ? 'ModChat' : _titles[_currentIndex],
           style: const TextStyle(
             fontWeight: FontWeight.w800,
-            color: AppColors.background,
+            color: AppColors.highlight,
           ),
         ),
         actions: [
           IconButton(
             icon: const Icon(
               Icons.camera_alt_outlined,
-              color: AppColors.background,
+              color: AppColors.iconMuted,
             ),
             onPressed: _openCamera,
             tooltip: 'Camera',
           ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: AppColors.background),
+            icon: const Icon(Icons.more_vert, color: AppColors.iconMuted),
             onSelected: _onMenuSelected,
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'new_group', child: Text('New group')),
@@ -196,8 +246,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 padding: const EdgeInsets.all(12.0),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.05),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [AppColors.cardTop, AppColors.cardBottom],
+                    ),
                     borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: AppColors.outline.withOpacity(0.8),
+                      width: 1,
+                    ),
                   ),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -207,13 +265,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     controller: _chatSearchController,
                     onChanged: (_) => setState(() {}),
                     textAlignVertical: TextAlignVertical.center,
-                    style: const TextStyle(color: Colors.black),
+                    style: const TextStyle(color: AppColors.highlight),
                     decoration: InputDecoration(
                       isDense: true,
                       border: InputBorder.none,
                       prefixIcon: const Icon(
                         Icons.search,
-                        color: AppColors.background,
+                        color: AppColors.iconMuted,
                         size: 20,
                       ),
                       prefixIconConstraints: const BoxConstraints(
@@ -224,7 +282,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       filled: true,
                       fillColor: Colors.transparent,
                       hintText: 'Search chats',
-                      hintStyle: const TextStyle(color: Colors.black),
+                      hintStyle: const TextStyle(
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                   ),
                 ),
@@ -236,7 +296,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       return const Center(
                         child: Text(
                           'No chats yet',
-                          style: TextStyle(color: AppColors.background),
+                          style: TextStyle(color: AppColors.textSecondary),
                         ),
                       );
                     }
@@ -272,7 +332,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   error: (e, _) => Center(
                     child: Text(
                       'Error: $e',
-                      style: const TextStyle(color: Colors.black),
+                      style: const TextStyle(color: AppColors.textSecondary),
                     ),
                   ),
                 ),
@@ -305,27 +365,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Widget _buildBottomNav() {
-    return WaveNavBar(
-      items: const [
-        WaveNavItem(icon: Icons.chat_bubble_rounded, label: 'Chats'),
-        WaveNavItem(icon: Icons.update, label: 'Updates'),
-        WaveNavItem(icon: Icons.groups_rounded, label: 'Communities'),
-        WaveNavItem(icon: Icons.call_rounded, label: 'Calls'),
+    return SpotlightNavBar(
+      items: [
+        const SpotlightNavItem(icon: Icons.chat_bubble_outline),
+        const SpotlightNavItem(icon: Icons.update_outlined),
+        const SpotlightNavItem(icon: Icons.groups_outlined),
+        const SpotlightNavItem(icon: Icons.call_outlined),
       ],
       currentIndex: _currentIndex,
       onTap: (index) {
         setState(() => _currentIndex = index);
         _pageController.animateToPage(
           index,
-          duration: const Duration(milliseconds: 420),
-          curve: Curves.easeInOutCubicEmphasized,
+          duration: const Duration(
+            milliseconds: 1,
+          ), // Instant page change, nav handles animation
+          curve: Curves.linear,
         );
       },
-      barColor: AppColors.background,
-      iconColor: AppColors.highlight,
-      activeIconColor: AppColors.background,
-      cornerRadius: 20,
-      height: 74,
     );
   }
 }
@@ -336,12 +393,12 @@ extension on _HomeScreenState {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 64, color: AppColors.background),
+          Icon(icon, size: 64, color: AppColors.iconMuted),
           const SizedBox(height: 12),
           Text(
             text,
             style: const TextStyle(
-              color: AppColors.background,
+              color: AppColors.textSecondary,
               fontSize: 16,
               fontWeight: FontWeight.w600,
             ),
@@ -402,7 +459,7 @@ class _ChatListTile extends ConsumerWidget {
               title: Text(
                 u?.name.isNotEmpty == true ? u!.name : peerId,
                 style: const TextStyle(
-                  color: Colors.black,
+                  color: AppColors.highlight,
                   fontWeight: FontWeight.w700,
                   fontSize: 15,
                 ),
@@ -411,30 +468,19 @@ class _ChatListTile extends ConsumerWidget {
                 last ?? '',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.black),
+                style: const TextStyle(color: AppColors.textSecondary),
               ),
               trailing: time != null
                   ? Text(
                       _formatTime(time!),
                       style: const TextStyle(
-                        color: Colors.black,
+                        color: AppColors.textSecondary,
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
                     )
                   : null,
-              leading: CircleAvatar(
-                backgroundColor: AppColors.sinopia.withValues(alpha: 0.25),
-                backgroundImage: (u?.profileImageUrl?.isNotEmpty == true)
-                    ? NetworkImage(u!.profileImageUrl!)
-                    : null,
-                child: (u?.profileImageUrl?.isNotEmpty == true)
-                    ? null
-                    : Icon(
-                        Icons.person,
-                        color: AppColors.white.withOpacity(0.7),
-                      ),
-              ),
+              leading: _ResolvedAvatar(url: u?.profileImageUrl),
             ),
           ),
         );
@@ -540,18 +586,10 @@ class _ProfileSheetState extends ConsumerState<_ProfileSheet> {
                   children: [
                     GestureDetector(
                       onTap: _pickAvatar,
-                      child: CircleAvatar(
+                      child: _ResolvedAvatar(
+                        url: user?.profileImageUrl,
                         radius: 36,
-                        backgroundImage:
-                            (user?.profileImageUrl?.isNotEmpty == true)
-                            ? NetworkImage(user!.profileImageUrl!)
-                            : null,
-                        child: (user?.profileImageUrl?.isNotEmpty == true)
-                            ? null
-                            : const Icon(
-                                Icons.camera_alt,
-                                color: Colors.white70,
-                              ),
+                        emptyIcon: Icons.camera_alt,
                       ),
                     ),
                   ],
@@ -559,9 +597,16 @@ class _ProfileSheetState extends ConsumerState<_ProfileSheet> {
                 const SizedBox(height: 12),
                 Container(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [AppColors.cardTop, AppColors.cardBottom],
+                    ),
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.navy, width: 1.5),
+                    border: Border.all(
+                      color: AppColors.outline.withOpacity(0.9),
+                      width: 1,
+                    ),
                   ),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -579,9 +624,16 @@ class _ProfileSheetState extends ConsumerState<_ProfileSheet> {
                 const SizedBox(height: 8),
                 Container(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [AppColors.cardTop, AppColors.cardBottom],
+                    ),
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.navy, width: 1.5),
+                    border: Border.all(
+                      color: AppColors.outline.withOpacity(0.9),
+                      width: 1,
+                    ),
                   ),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,

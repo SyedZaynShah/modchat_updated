@@ -209,38 +209,50 @@ class ChatService {
   }
 
   Future<void> acknowledgeDelivered(String chatId) async {
-    final uid = _auth.currentUser!.uid;
-    final batch = FirebaseFirestore.instance.batch();
-    final q = await _fs
-        .messages(chatId)
-        .where('receiverId', isEqualTo: uid)
-        .where('deliveredAt', isNull: true)
-        .get();
-    for (final d in q.docs) {
-      batch.update(d.reference, {
-        'deliveredAt': FieldValue.serverTimestamp(),
-        'status': 2,
-      });
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      final q = await _fs
+          .messages(chatId)
+          .where('receiverId', isEqualTo: uid)
+          .where('deliveredAt', isNull: true)
+          .get();
+      for (final d in q.docs) {
+        batch.update(d.reference, {
+          'deliveredAt': FieldValue.serverTimestamp(),
+          'status': 2,
+        });
+      }
+      await batch.commit();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') return;
+      rethrow;
     }
-    await batch.commit();
   }
 
   Future<void> markAllSeen(String chatId) async {
-    final uid = _auth.currentUser!.uid;
-    final batch = FirebaseFirestore.instance.batch();
-    final q = await _fs
-        .messages(chatId)
-        .where('receiverId', isEqualTo: uid)
-        .where('isSeen', isEqualTo: false)
-        .get();
-    for (final d in q.docs) {
-      batch.update(d.reference, {
-        'isSeen': true,
-        'seenAt': FieldValue.serverTimestamp(),
-        'status': 3,
-      });
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      final q = await _fs
+          .messages(chatId)
+          .where('receiverId', isEqualTo: uid)
+          .where('isSeen', isEqualTo: false)
+          .get();
+      for (final d in q.docs) {
+        batch.update(d.reference, {
+          'isSeen': true,
+          'seenAt': FieldValue.serverTimestamp(),
+          'status': 3,
+        });
+      }
+      await batch.commit();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') return;
+      rethrow;
     }
-    await batch.commit();
   }
 
   Future<void> editMessage({

@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'theme/theme.dart';
 import 'screens/auth/login_screen.dart';
+import 'screens/auth/landing_screen.dart';
 import 'screens/auth/signup_screen.dart';
 import 'screens/auth/verify_email_screen.dart';
 import 'screens/home/home_screen.dart';
@@ -28,7 +29,10 @@ class App extends ConsumerWidget {
         );
       },
       home: const ModChatSplashScreen(),
-      routes: {"/home": (context) => const AuthGate()},
+      routes: {
+        "/home": (context) => const AuthGate(),
+        LandingScreen.routeName: (context) => const LandingScreen(),
+      },
       onGenerateRoute: (settings) {
         if (settings.name == ChatDetailScreen.routeName) {
           final args = settings.arguments as Map<String, dynamic>;
@@ -49,6 +53,8 @@ class App extends ConsumerWidget {
           );
         }
         switch (settings.name) {
+          case LandingScreen.routeName:
+            return MaterialPageRoute(builder: (_) => const LandingScreen());
           case SignUpScreen.routeName:
             return MaterialPageRoute(builder: (_) => const SignUpScreen());
           case VerifyEmailScreen.routeName:
@@ -68,7 +74,7 @@ class AuthGate extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+      stream: FirebaseAuth.instance.userChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Scaffold(
@@ -100,43 +106,8 @@ class AuthGate extends ConsumerWidget {
         final user = snapshot.data;
         if (user == null) return const LoginScreen();
 
-        // Reload user to get latest emailVerified status
-        return FutureBuilder(
-          future: user.reload(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return Scaffold(
-                backgroundColor: AppColors.background,
-                body: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Colors.white,
-                              AppColors.sinopia.withValues(alpha: 0.03),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.sinopia,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }
-
-            if (!user.emailVerified) return const VerifyEmailScreen();
-            return const HomeScreen();
-          },
-        );
+        if (!user.emailVerified) return const VerifyEmailScreen();
+        return const HomeScreen();
       },
     );
   }

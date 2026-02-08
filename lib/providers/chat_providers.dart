@@ -24,6 +24,8 @@ final messagesProvider = StreamProvider.family<List<MessageModel>, String>((
   chatId,
 ) {
   ref.keepAlive();
+  final uid = ref.watch(currentUserProvider)?.uid;
+  if (uid == null) return const Stream.empty();
   final service = ref.watch(chatServiceProvider);
   return service.streamMessages(chatId);
 });

@@ -45,6 +45,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     // Delay to ensure providers are ready
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await ref.read(chatServiceProvider).acknowledgeDelivered(widget.chatId);
+      if (!mounted) return;
       setState(() => _ackSent = true);
     });
     _scrollController.addListener(() {
@@ -93,6 +94,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
   void _maybeScrollToBottom() {
     Future.delayed(const Duration(milliseconds: 150), () {
+      if (!mounted) return;
       if (!_scrollController.hasClients) return;
       if (_nearBottom) {
         _scrollController.animateTo(

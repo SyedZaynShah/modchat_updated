@@ -7,13 +7,9 @@ import 'package:just_audio/just_audio.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:math' as math;
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:path_provider/path_provider.dart';
-import 'dart:io';
 import '../models/message_model.dart';
 import '../services/supabase_service.dart';
 import '../services/storage_service.dart';
-import '../theme/theme.dart';
 
 class FilePreviewWidget extends StatelessWidget {
   final MessageModel message;
@@ -29,22 +25,27 @@ class FilePreviewWidget extends StatelessWidget {
     final url = message.mediaUrl ?? '';
     switch (message.messageType) {
       case MessageType.image:
-        return _ImagePreview(message: message, isMe: isMe);
+        return _ImagePreview(url: url, type: message.messageType, isMe: isMe);
       case MessageType.video:
         return _VideoPreview(url: url, type: message.messageType, isMe: isMe);
       case MessageType.audio:
         return _AudioInline(url: url, type: message.messageType, isMe: isMe);
       case MessageType.file:
       default:
-        return _FileTile(message: message, isMe: isMe);
+        return _FileTile(url: url, type: message.messageType, isMe: isMe);
     }
   }
 }
 
 class _ImagePreview extends StatefulWidget {
-  final MessageModel message;
+  final String url;
+  final MessageType type;
   final bool isMe;
-  const _ImagePreview({required this.message, required this.isMe});
+  const _ImagePreview({
+    required this.url,
+    required this.type,
+    required this.isMe,
+  });
   @override
   State<_ImagePreview> createState() => _ImagePreviewState();
 }
@@ -53,21 +54,19 @@ class _ImagePreviewState extends State<_ImagePreview> {
   String? _resolved;
   bool _portrait = false;
   bool _ready = false;
-  late final String _heroTag;
 
   @override
   void initState() {
     super.initState();
-    _heroTag = 'img_${widget.message.id}';
     _init();
   }
 
   Future<void> _init() async {
-    final v = widget.message.mediaUrl ?? '';
+    final v = widget.url;
     final resolved = v.contains('://')
         ? await SupabaseService.instance.resolveUrl(directUrl: v)
         : await SupabaseService.instance.resolveUrl(
-            bucket: widget.message.messageType == MessageType.audio
+            bucket: widget.type == MessageType.audio
                 ? StorageService().audioBucket
                 : StorageService().mediaBucket,
             path: v,
@@ -119,7 +118,7 @@ class _ImagePreviewState extends State<_ImagePreview> {
       );
     }
     final screenW = MediaQuery.of(context).size.width;
-    final maxBubbleW = screenW * 0.70; // WhatsApp-like ~70%
+    final maxBubbleW = screenW * 0.78;
     const portraitSizeW = 220.0;
     const portraitSizeH = 320.0;
     const landscapeSizeW = 300.0;
@@ -134,164 +133,32 @@ class _ImagePreviewState extends State<_ImagePreview> {
       onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => _ImageFullscreen(
-              heroTag: _heroTag,
-              url: _resolved!,
-              fileName: _suggestedFileName(widget.message.mediaUrl ?? ''),
+            builder: (_) => Scaffold(
+              backgroundColor: Colors.black,
+              appBar: AppBar(
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.download_rounded),
+                    onPressed: () async {
+                      await launchUrl(
+                        Uri.parse(_resolved!),
+                        mode: LaunchMode.externalApplication,
+                      );
+                    },
+                  ),
+                ],
+              ),
+              body: PhotoView(imageProvider: NetworkImage(_resolved!)),
             ),
           ),
         );
       },
-      child: Hero(
-        tag: _heroTag,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: SizedBox(
-            width: targetW,
-            height: targetH,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                CachedNetworkImage(
-                  imageUrl: _resolved!,
-                  fit: BoxFit.cover,
-                  fadeInDuration: const Duration(milliseconds: 180),
-                  placeholder: (context, _) => Container(
-                    color: Colors.black26,
-                    child: const Center(
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-                ),
-                // Bottom gradient for readability
-                const Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  height: 40,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Colors.transparent, Colors.black54],
-                      ),
-                    ),
-                  ),
-                ),
-                // Timestamp + ticks (sender only)
-                Positioned(
-                  right: 8,
-                  bottom: 6,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _formatTime(widget.message.timestamp.toDate()),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      if (widget.isMe) ...[
-                        const SizedBox(width: 6),
-                        Icon(
-                          _statusIconData(widget.message),
-                          size: 14,
-                          color: Colors.white,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _suggestedFileName(String raw) {
-    final base = raw.split('/').last;
-    if (base.isNotEmpty) return base;
-    final ts = DateTime.now().millisecondsSinceEpoch;
-    return 'image_$ts.jpg';
-  }
-
-  String _formatTime(DateTime dt) {
-    final h = dt.hour.toString().padLeft(2, '0');
-    final m = dt.minute.toString().padLeft(2, '0');
-    return '$h:$m';
-  }
-
-  IconData _statusIconData(MessageModel m) {
-    if (m.hasPendingWrites) return Icons.watch_later_outlined;
-    switch (m.status) {
-      case 1:
-        return Icons.done;
-      case 2:
-        return Icons.done; // keep single tick for delivered
-      case 3:
-        return Icons.done_all_rounded;
-      default:
-        return Icons.watch_later_outlined;
-    }
-  }
-}
-
-class _ImageFullscreen extends StatelessWidget {
-  final String heroTag;
-  final String url;
-  final String fileName;
-  const _ImageFullscreen({
-    required this.heroTag,
-    required this.url,
-    required this.fileName,
-  });
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        foregroundColor: AppColors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.download_rounded),
-            onPressed: () async {
-              try {
-                final res = await http.get(Uri.parse(url));
-                if (res.statusCode == 200) {
-                  // Save to app documents
-                  // ignore: deprecated_member_use
-                  final dir = await getApplicationDocumentsDirectory();
-                  final file = File('${dir.path}/$fileName');
-                  await file.writeAsBytes(res.bodyBytes);
-                  // ignore: use_build_context_synchronously
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Saved to ${file.path}')),
-                  );
-                } else {
-                  await launchUrl(
-                    Uri.parse(url),
-                    mode: LaunchMode.externalApplication,
-                  );
-                }
-              } catch (_) {
-                await launchUrl(
-                  Uri.parse(url),
-                  mode: LaunchMode.externalApplication,
-                );
-              }
-            },
-          ),
-        ],
-      ),
-      body: Center(
-        child: Hero(
-          tag: heroTag,
-          child: PhotoView(imageProvider: NetworkImage(url)),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          width: targetW,
+          height: targetH,
+          child: Image.network(_resolved!, fit: BoxFit.cover),
         ),
       ),
     );
@@ -431,6 +298,8 @@ class _AudioInlineState extends State<_AudioInline> {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   late final List<double> _bars;
+  StreamSubscription<Duration>? _posSub;
+  StreamSubscription<Duration?>? _durSub;
 
   @override
   void initState() {
@@ -453,10 +322,18 @@ class _AudioInlineState extends State<_AudioInline> {
             );
       await _player.setUrl(u);
       _duration = _player.duration ?? Duration.zero;
-      _player.positionStream.listen((p) => setState(() => _position = p));
-      _player.durationStream.listen(
-        (d) => setState(() => _duration = d ?? Duration.zero),
-      );
+
+      await _posSub?.cancel();
+      _posSub = _player.positionStream.listen((p) {
+        if (!mounted) return;
+        setState(() => _position = p);
+      });
+
+      await _durSub?.cancel();
+      _durSub = _player.durationStream.listen((d) {
+        if (!mounted) return;
+        setState(() => _duration = d ?? Duration.zero);
+      });
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -464,6 +341,8 @@ class _AudioInlineState extends State<_AudioInline> {
 
   @override
   void dispose() {
+    _posSub?.cancel();
+    _durSub?.cancel();
     _player.dispose();
     super.dispose();
   }
@@ -633,184 +512,45 @@ List<double> _generateBars(String seed) {
   return List.generate(48, (i) => 0.3 + r.nextDouble() * 0.7);
 }
 
-class _FileTile extends StatefulWidget {
-  final MessageModel message;
+class _FileTile extends StatelessWidget {
+  final String url;
+  final MessageType type;
   final bool isMe;
-  const _FileTile({required this.message, required this.isMe});
-  @override
-  State<_FileTile> createState() => _FileTileState();
-}
-
-class _FileTileState extends State<_FileTile> {
-  bool _downloading = false;
-  double _progress = 0.0;
-  String? _localPath;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkIfDownloaded();
-  }
-
-  Future<void> _checkIfDownloaded() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final fileName = _suggestedName(widget.message);
-    final path = '${dir.path}/$fileName';
-    final exists = await File(path).exists();
-    if (exists) setState(() => _localPath = path);
-  }
-
-  Color _iconColorFor(String name) {
-    final l = name.toLowerCase();
-    if (l.endsWith('.pdf')) return Colors.red;
-    if (l.endsWith('.ppt') || l.endsWith('.pptx')) return Colors.orange;
-    if (l.endsWith('.doc') || l.endsWith('.docx')) return Colors.blue;
-    if (l.endsWith('.zip') || l.endsWith('.rar')) return Colors.grey;
-    return widget.isMe ? Colors.white70 : Colors.black;
-  }
-
-  String _sizeLabel() {
-    final bytes = widget.message.mediaSize ?? 0;
-    if (bytes <= 0) return '';
-    const kb = 1024;
-    const mb = kb * 1024;
-    if (bytes >= mb) {
-      return (bytes / mb).toStringAsFixed(2) + ' MB';
-    }
-    return (bytes / kb).toStringAsFixed(1) + ' KB';
-  }
-
-  String _suggestedName(MessageModel m) {
-    final url = (m.mediaUrl ?? '').trim();
-    final last = url.split('/').last;
-    if (last.isNotEmpty) return last;
-    final ts = m.timestamp.millisecondsSinceEpoch;
-    return 'file_$ts';
-  }
-
-  Future<void> _handleTap() async {
-    if (_localPath != null) {
-      // Try open with external app
-      final uri = Uri.file(_localPath!);
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-      return;
-    }
-    if (_downloading) return;
-    setState(() {
-      _downloading = true;
-      _progress = 0.0;
-    });
-    try {
-      final resolved = await _resolve(widget.message);
-      final req = await http.Client().send(
-        http.Request('GET', Uri.parse(resolved)),
-      );
-      final dir = await getApplicationDocumentsDirectory();
-      final fileName = _suggestedName(widget.message);
-      final file = File('${dir.path}/$fileName');
-      final sink = file.openWrite();
-      final contentLen = req.contentLength ?? 0;
-      int received = 0;
-      await for (final chunk in req.stream) {
-        received += chunk.length;
-        sink.add(chunk);
-        if (contentLen > 0) {
-          setState(() => _progress = received / contentLen);
-        }
-      }
-      await sink.flush();
-      await sink.close();
-      setState(() => _localPath = file.path);
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Saved to ${file.path}')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Download failed: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _downloading = false);
-    }
-  }
-
-  Future<String> _resolve(MessageModel m) async {
-    final url = m.mediaUrl ?? '';
-    if (url.contains('://')) {
-      return SupabaseService.instance.resolveUrl(directUrl: url);
-    }
-    final bucket = m.messageType == MessageType.audio
-        ? StorageService().audioBucket
-        : StorageService().mediaBucket;
-    return SupabaseService.instance.resolveUrl(bucket: bucket, path: url);
-  }
-
+  const _FileTile({required this.url, required this.type, required this.isMe});
   @override
   Widget build(BuildContext context) {
-    final name = _suggestedName(widget.message);
-    final tc = widget.isMe ? Colors.white : Colors.black;
-    final ic = _iconColorFor(name);
-    return InkWell(
-      onTap: _handleTap,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: const BoxDecoration(shape: BoxShape.circle),
-            child: Icon(Icons.insert_drive_file, color: ic, size: 28),
+    return FutureBuilder<String>(
+      future: () async {
+        if (url.contains('://')) {
+          return SupabaseService.instance.resolveUrl(directUrl: url);
+        }
+        final bucket = type == MessageType.audio
+            ? StorageService().audioBucket
+            : StorageService().mediaBucket;
+        return SupabaseService.instance.resolveUrl(bucket: bucket, path: url);
+      }(),
+      builder: (context, snap) {
+        final name = url.split('/').last;
+        final tc = isMe ? Colors.white : Colors.black;
+        final ic = isMe ? Colors.white70 : Colors.black;
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: tc, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: tc, fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 2),
-                if (_sizeLabel().isNotEmpty)
-                  Text(
-                    _sizeLabel(),
-                    style: TextStyle(color: tc.withOpacity(0.7), fontSize: 12),
-                  ),
-                if (_downloading)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6.0, right: 12),
-                    child: LinearProgressIndicator(
-                      value: _progress == 0.0 ? null : _progress,
-                      minHeight: 3,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          if (_downloading)
-            const SizedBox(
-              height: 24,
-              width: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          else if (_localPath != null)
-            IconButton(
-              icon: Icon(Icons.open_in_new, color: tc),
-              onPressed: _handleTap,
-            )
-          else
-            IconButton(
-              icon: Icon(Icons.download_rounded, color: tc),
-              onPressed: _handleTap,
-            ),
-        ],
-      ),
+          leading: Icon(Icons.insert_drive_file, color: ic),
+          trailing: Icon(Icons.open_in_new, color: ic),
+          onTap: () {
+            if (!snap.hasData) return;
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => _PdfMaybe(url: snap.data!)),
+            );
+          },
+        );
+      },
     );
   }
 }

@@ -1,7 +1,30 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  static Future<void> resetPersistenceAndNetwork() async {
+    final db = FirebaseFirestore.instance;
+    if (kIsWeb) {
+      try {
+        await db.disableNetwork();
+      } catch (_) {}
+      try {
+        await db.enableNetwork();
+      } catch (_) {}
+      return;
+    }
+    try {
+      await db.disableNetwork();
+    } catch (_) {}
+    try {
+      await db.clearPersistence();
+    } catch (_) {}
+    try {
+      await db.enableNetwork();
+    } catch (_) {}
+  }
 
   CollectionReference<Map<String, dynamic>> get users =>
       _db.collection('users');

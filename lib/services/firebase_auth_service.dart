@@ -53,6 +53,9 @@ class FirebaseAuthService {
       'role': 'user',
     });
 
+    // Ensure no stale cached Firestore state survives account creation.
+    await FirestoreService.resetPersistenceAndNetwork();
+
     return credential;
   }
 
@@ -66,9 +69,14 @@ class FirebaseAuthService {
 
   /// ✅ Reload current user info
   Future<void> reloadUser() async {
-    await _auth.currentUser?.reload();
+    final u = _auth.currentUser;
+    await u?.reload();
+    await u?.getIdToken(true);
   }
 
   /// ✅ Sign Out
-  Future<void> signOut() async => _auth.signOut();
+  Future<void> signOut() async {
+    await _auth.signOut();
+    await FirestoreService.resetPersistenceAndNetwork();
+  }
 }

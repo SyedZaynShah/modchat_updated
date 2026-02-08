@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../../theme/theme.dart';
 
@@ -24,35 +23,32 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(opacity),
-            borderRadius: BorderRadius.circular(radius),
-            border: const Border(
-              top: BorderSide(color: AppColors.sinopia, width: 3),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.navy.withOpacity(0.10),
-                offset: const Offset(0, 6),
-                blurRadius: 20,
-              ),
-              if (glow)
-                BoxShadow(
-                  color: AppColors.sinopia.withOpacity(0.18),
-                  blurRadius: 24,
-                  spreadRadius: 1,
-                ),
-            ],
-          ),
-          child: child,
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppColors.cardTop, AppColors.cardBottom],
         ),
+        border: Border.all(color: AppColors.outline.withOpacity(0.9), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.45),
+            blurRadius: 28,
+            spreadRadius: -10,
+            offset: const Offset(0, 16),
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.20),
+            blurRadius: 10,
+            spreadRadius: -8,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
+      child: child,
     );
   }
 }
@@ -84,9 +80,8 @@ class _BlueButtonState extends State<BlueButton> {
 
   @override
   Widget build(BuildContext context) {
-    final bg = widget.filled ? AppColors.navy : Colors.transparent;
-    final fg = widget.filled ? Colors.white : AppColors.navy;
-    final border = AppColors.navy;
+    final fg = widget.filled ? AppColors.highlight : AppColors.highlight;
+    final border = widget.filled ? Colors.transparent : AppColors.outline;
 
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
@@ -94,22 +89,34 @@ class _BlueButtonState extends State<BlueButton> {
       onTapUp: (_) => setState(() => _pressed = false),
       onTap: widget.loading ? null : widget.onPressed,
       child: AnimatedScale(
-        scale: _pressed ? 0.98 : 1.0,
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOut,
+        scale: _pressed ? 0.985 : 1.0,
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOutCubic,
         child: Container(
           height: widget.height,
           decoration: BoxDecoration(
-            color: widget.loading ? bg.withOpacity(0.7) : bg,
+            gradient: widget.filled
+                ? LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      AppColors.navy.withOpacity(widget.loading ? 0.82 : 0.95),
+                      AppColors.navy.withOpacity(widget.loading ? 0.70 : 0.88),
+                    ],
+                  )
+                : const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [AppColors.cardTop, AppColors.cardBottom],
+                  ),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: border, width: 0.5),
+            border: Border.all(color: border, width: 1),
             boxShadow: [
               BoxShadow(
-                color: AppColors.sinopia.withOpacity(
-                  widget.filled ? 0.22 : 0.10,
-                ),
-                blurRadius: 22,
-                spreadRadius: 1,
+                color: Colors.black.withOpacity(widget.filled ? 0.45 : 0.30),
+                blurRadius: 26,
+                spreadRadius: -14,
+                offset: const Offset(0, 16),
               ),
             ],
           ),

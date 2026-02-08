@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../theme/theme.dart';
+import '../../screens/auth/landing_screen.dart';
 
 class ModChatSplashScreen extends StatefulWidget {
   const ModChatSplashScreen({super.key});
@@ -31,7 +33,13 @@ class _ModChatSplashScreenState extends State<ModChatSplashScreen>
     _controller.forward();
 
     Future.delayed(const Duration(seconds: 3), () {
-      Navigator.pushReplacementNamed(context, "/home");
+      final u = FirebaseAuth.instance.currentUser;
+      if (!mounted) return;
+      if (u == null) {
+        Navigator.pushReplacementNamed(context, LandingScreen.routeName);
+      } else {
+        Navigator.pushReplacementNamed(context, "/home");
+      }
     });
   }
 
