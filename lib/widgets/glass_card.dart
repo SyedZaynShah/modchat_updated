@@ -7,17 +7,24 @@ class GlassCard extends StatelessWidget {
   final double radius;
   final bool glow;
 
-  const GlassCard({super.key, required this.child, this.padding = const EdgeInsets.all(16), this.radius = 16, this.glow = true});
+  const GlassCard({
+    super.key,
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+    this.radius = 18,
+    this.glow = true,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return AppTheme.glass(
-      radius: radius,
-      child: Container(
-        decoration: AppTheme.glassDecoration(radius: radius, glow: glow),
-        padding: padding,
-        child: child,
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: AppColors.outline, width: 1),
       ),
+      padding: padding,
+      child: child,
     );
   }
 }

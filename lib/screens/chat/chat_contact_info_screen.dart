@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import 'dart:ui' as ui;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:video_player/video_player.dart';
 import '../../providers/user_providers.dart';
 import '../../providers/chat_providers.dart';
 import '../../models/message_model.dart';
+import '../../widgets/glass_dropdown.dart';
 import '../../services/supabase_service.dart';
 import '../../services/storage_service.dart';
-import '../../theme/theme.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -26,7 +27,7 @@ class ChatContactInfoScreen extends ConsumerStatefulWidget {
 }
 
 class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
-  int _tabIndex = 0; // 0 media, 1 documents, 2 links
+  int _tabIndex = 0; // 0 media, 1 documents, 2 links, 3 voice
   bool _showAllMedia = false;
 
   Future<ImageProvider?> _resolve(String? url) async {
@@ -59,399 +60,255 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
     final messages = ref.watch(messagesProvider(widget.chatId));
     final bubbleZoom = bubbleZoomStore[widget.chatId] ?? 1.0;
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text(
-          'Contact info',
-          style: TextStyle(
-            color: AppColors.navy,
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: AppColors.navy),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
-        ),
-        bottom: const PreferredSize(
-          preferredSize: Size.fromHeight(3),
-          child: SizedBox(
-            height: 3,
-            child: DecoratedBox(
-              decoration: BoxDecoration(color: AppColors.navy),
+      backgroundColor: Colors.black,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(56),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(
+                    Icons.arrow_back_ios_new,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Contact info',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                GlassDropdown(
+                  tooltip: 'More',
+                  items: const [
+                    GlassDropdownItem(
+                      value: 'block',
+                      label: 'Block',
+                      icon: Icons.block,
+                      isDestructive: true,
+                    ),
+                    GlassDropdownItem(
+                      value: 'report',
+                      label: 'Report',
+                      icon: Icons.flag,
+                      isDestructive: true,
+                    ),
+                  ],
+                  onSelected: (v) {},
+                  child: const Icon(Icons.more_vert, color: Colors.white),
+                ),
+              ],
             ),
           ),
         ),
       ),
       body: user.when(
         data: (u) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                FutureBuilder<ImageProvider?>(
-                  future: _resolve(u?.profileImageUrl),
-                  builder: (context, snap) => CircleAvatar(
-                    radius: 44,
-                    backgroundImage: snap.data,
-                    child: snap.data == null
-                        ? const Icon(
-                            Icons.person,
-                            size: 44,
-                            color: AppColors.navy,
-                          )
-                        : null,
-                  ),
-                ),
-                Transform.translate(
-                  offset: const Offset(0, -44),
-                  child: _NotchedActionsBar(
-                    avatarRadius: 44,
-                    gap: 10,
-                    height: 214,
-                    title: (u?.name.isNotEmpty == true
-                        ? u!.name
-                        : widget.peerId),
-                    subtitle: (u?.about ?? ''),
-                    onCall: () {},
-                    onVideo: () {},
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Media',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.navy,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                // Tabs icons
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _tabIcon(0, Icons.photo_library_outlined),
-                    _tabIcon(1, Icons.description_outlined),
-                    _tabIcon(2, Icons.link_outlined),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                messages.when(
-                  data: (list) {
-                    if (_tabIndex == 0) {
-                      final media = list
-                          .where(
-                            (m) =>
-                                m.messageType == MessageType.image &&
-                                (m.mediaUrl ?? '').isNotEmpty,
-                          )
-                          .toList()
-                          .reversed
-                          .toList();
-                      if (media.isEmpty) return _empty('No media');
-                      final shown = _showAllMedia
-                          ? media
-                          : media.take(9).toList();
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          GridView.builder(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 3,
-                                  mainAxisSpacing: 6,
-                                  crossAxisSpacing: 6,
-                                ),
-                            itemCount: shown.length,
-                            itemBuilder: (context, i) {
-                              final m = shown[i];
-                              final raw = m.mediaUrl!;
-                              return FutureBuilder<String>(
-                                future: () async {
-                                  if (raw.contains('://')) {
-                                    return SupabaseService.instance.resolveUrl(
-                                      directUrl: raw,
-                                    );
-                                  }
-                                  final bucket = StorageService().mediaBucket;
-                                  return SupabaseService.instance.resolveUrl(
-                                    bucket: bucket,
-                                    path: raw,
-                                  );
-                                }(),
-                                builder: (context, snap) {
-                                  final resolved = snap.data;
-                                  return GestureDetector(
-                                    onTap: resolved == null
-                                        ? null
-                                        : () {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder: (_) => Scaffold(
-                                                  backgroundColor: Colors.black,
-                                                  appBar: AppBar(
-                                                    actions: [
-                                                      IconButton(
-                                                        icon: const Icon(
-                                                          Icons
-                                                              .download_rounded,
-                                                        ),
-                                                        onPressed: () async {
-                                                          await launchUrl(
-                                                            Uri.parse(resolved),
-                                                            mode: LaunchMode
-                                                                .externalApplication,
-                                                          );
-                                                        },
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  body: PhotoView(
-                                                    imageProvider: NetworkImage(
-                                                      resolved,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: resolved == null
-                                          ? const Center(
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : Image.network(
-                                              resolved,
-                                              fit: BoxFit.cover,
-                                            ),
+          final name = (u?.name.isNotEmpty == true) ? u!.name : widget.peerId;
+          final about = (u?.about ?? '').trim();
+          return CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 28, 16, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      FutureBuilder<ImageProvider?>(
+                        future: _resolve(u?.profileImageUrl),
+                        builder: (context, snap) {
+                          return Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              CircleAvatar(
+                                radius: 40,
+                                backgroundColor: const Color(0xFF1A1A1A),
+                                backgroundImage: snap.data,
+                                child: snap.data == null
+                                    ? const Icon(
+                                        Icons.person,
+                                        size: 28,
+                                        color: Colors.white54,
+                                      )
+                                    : null,
+                              ),
+                              Positioned(
+                                right: -1,
+                                bottom: -1,
+                                child: Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFC74B6C),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.black,
+                                      width: 2,
                                     ),
-                                  );
-                                },
-                              );
-                            },
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (about.isNotEmpty)
+                        Text(
+                          about,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFFA5A5A5),
+                            fontSize: 13,
                           ),
-                          if (media.length > shown.length)
-                            TextButton(
-                              onPressed: () =>
-                                  setState(() => _showAllMedia = true),
-                              child: const Text('Show more'),
-                            ),
-                        ],
-                      );
-                    } else if (_tabIndex == 1) {
-                      final docs = list
-                          .where(
-                            (m) =>
-                                m.messageType == MessageType.file &&
-                                (m.mediaUrl ?? '').isNotEmpty,
-                          )
-                          .toList()
-                          .reversed
-                          .toList();
-                      if (docs.isEmpty) return _empty('No documents');
-                      return ListView.separated(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: docs.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, i) {
-                          final m = docs[i];
-                          final name = (m.mediaUrl ?? '').split('/').last;
-                          return ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: const Icon(
-                              Icons.insert_drive_file,
-                              color: AppColors.navy,
-                            ),
-                            title: Text(
-                              name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: AppColors.navy),
-                            ),
-                            trailing: const Icon(
-                              Icons.open_in_new,
-                              color: AppColors.navy,
-                            ),
-                          );
+                        ),
+                      const SizedBox(height: 14),
+                      _QuickActionBar(
+                        onCall: () {},
+                        onVideo: () {},
+                        onSearch: () {},
+                        onMute: () {},
+                      ),
+                      const SizedBox(height: 18),
+                      _MediaTabs(
+                        index: _tabIndex,
+                        onChanged: (i) {
+                          setState(() {
+                            _tabIndex = i;
+                            if (i != 0) _showAllMedia = false;
+                          });
                         },
-                      );
-                    } else {
-                      final links = list
-                          .where(
-                            (m) =>
-                                m.messageType == MessageType.text &&
-                                (m.text ?? '').toLowerCase().contains('http'),
-                          )
-                          .map((m) => m.text!)
-                          .toList()
-                          .reversed
-                          .toList();
-                      if (links.isEmpty) return _empty('No links');
-                      return ListView.separated(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: links.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, i) {
-                          final t = links[i];
-                          return ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: const Icon(
-                              Icons.link,
-                              color: AppColors.navy,
-                            ),
-                            title: Text(
-                              t,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: AppColors.navy),
-                            ),
-                          );
-                        },
-                      );
-                    }
-                  },
-                  loading: () => const SizedBox(
-                    height: 40,
-                    child: Center(
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                   ),
-                  error: (e, _) => SizedBox(
-                    height: 40,
-                    child: Center(
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                sliver: SliverToBoxAdapter(
+                  child: messages.when(
+                    data: (list) => _buildTabContent(context, list),
+                    loading: () => _TabSkeleton(index: _tabIndex),
+                    error: (e, _) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 18),
                       child: Text(
                         '$e',
                         style: const TextStyle(
-                          color: Colors.black,
+                          color: Color(0xFF9A9A9A),
                           fontSize: 12,
                         ),
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 30),
-                // Bubble size slider (controls chat bubble zoom)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Chat bubble size',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.navy,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    trackHeight: 4,
-                    activeTrackColor: AppColors.navy,
-                    inactiveTrackColor: Colors.black54,
-                    thumbColor: AppColors.navy,
-                    overlayColor: AppColors.navy.withOpacity(0.12),
-                    valueIndicatorColor: AppColors.navy,
-                    valueIndicatorTextStyle: const TextStyle(
-                      color: Colors.white,
-                    ),
-                  ),
-                  child: Slider(
-                    min: 1.0,
-                    max: 1.6,
-                    divisions: 12,
-                    label: bubbleZoom.toStringAsFixed(2) + 'x',
-                    value: bubbleZoom.clamp(1.0, 1.6),
-                    onChanged: (v) {
-                      setState(() {
-                        bubbleZoomStore[widget.chatId] = v;
-                      });
-                    },
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppColors.navy, width: 1.2),
-                  ),
-                  child: Text(
-                    'Current size: ' + bubbleZoom.toStringAsFixed(2) + 'x',
-                    style: const TextStyle(
-                      color: AppColors.navy,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Divider(height: 24),
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () async {
-                      final confirm = await showDialog<bool>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: const Text('Delete chat?'),
-                          content: const Text(
-                            'This will permanently delete the conversation and all its messages.',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: const Text('Cancel'),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, true),
-                              child: const Text('Delete'),
-                            ),
-                          ],
-                        ),
-                      );
-                      if (confirm == true) {
-                        await ref
-                            .read(chatServiceProvider)
-                            .deleteChatPermanently(widget.chatId);
-                        if (!mounted) return;
-                        // Ensure we land on the chat list reliably
-                        Navigator.of(
-                          context,
-                        ).pushNamedAndRemoveUntil('/home', (route) => false);
-                      }
-                    },
-                    splashColor: AppColors.navy.withOpacity(0.08),
-                    highlightColor: AppColors.navy.withOpacity(0.06),
-                    child: const ListTile(
-                      leading: Icon(Icons.delete_forever, color: Colors.red),
-                      title: Text(
-                        'Delete chat',
+              ),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Chat Settings',
                         style: TextStyle(
-                          color: AppColors.navy,
-                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 10),
+                      _SettingsTile(
+                        icon: Icons.text_fields,
+                        title: 'Chat bubble size',
+                        onTap: () {},
+                      ),
+                      const SizedBox(height: 10),
+                      _BubbleSizeSlider(
+                        value: bubbleZoom,
+                        onChanged: (v) => setState(() {
+                          bubbleZoomStore[widget.chatId] = v;
+                        }),
+                      ),
+                      const SizedBox(height: 12),
+                      _SettingsTile(
+                        icon: Icons.notifications_off_outlined,
+                        title: 'Mute notifications',
+                        onTap: () {},
+                      ),
+                      _SettingsTile(
+                        icon: Icons.block,
+                        title: 'Block contact',
+                        danger: true,
+                        onTap: () {},
+                      ),
+                      _SettingsTile(
+                        icon: Icons.delete_outline,
+                        title: 'Delete chat',
+                        danger: true,
+                        onTap: () async {
+                          final nav = Navigator.of(context);
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Delete chat?'),
+                              content: const Text(
+                                'This will permanently delete the conversation and all its messages.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text('Delete'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (!mounted) return;
+                          if (confirm == true) {
+                            await ref
+                                .read(chatServiceProvider)
+                                .deleteChatPermanently(widget.chatId);
+                            nav.pushNamedAndRemoveUntil(
+                              '/home',
+                              (route) => false,
+                            );
+                          }
+                        },
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -460,203 +317,884 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
     );
   }
 
-  Widget _tabIcon(int i, IconData icon) {
-    final selected = _tabIndex == i;
-    return InkWell(
-      onTap: () => setState(() {
-        _tabIndex = i;
-        if (i != 0) _showAllMedia = false;
-      }),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+  Widget _buildTabContent(BuildContext context, List<MessageModel> list) {
+    if (_tabIndex == 0) {
+      final media = list
+          .where(
+            (m) =>
+                (m.messageType == MessageType.image ||
+                    m.messageType == MessageType.video) &&
+                (m.mediaUrl ?? '').isNotEmpty,
+          )
+          .toList()
+          .reversed
+          .toList();
+      if (media.isEmpty) {
+        return const _EmptyState(text: 'No media shared yet');
+      }
+      final shown = _showAllMedia ? media : media.take(9).toList();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(icon, color: AppColors.navy),
-          const SizedBox(height: 6),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            height: 2,
-            width: 26,
-            decoration: BoxDecoration(
-              color: selected ? AppColors.navy : Colors.transparent,
-              borderRadius: BorderRadius.circular(2),
+          _MediaGrid(
+            items: shown,
+            resolveUrl: (raw, type) => _resolveMediaTileUrl(raw, type),
+            onOpen: (items, start) => _openMediaViewer(context, items, start),
+          ),
+          if (media.length > shown.length)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: TextButton(
+                onPressed: () => setState(() => _showAllMedia = true),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+                child: const Text('Show more'),
+              ),
             ),
+        ],
+      );
+    }
+
+    if (_tabIndex == 1) {
+      final docs = list
+          .where(
+            (m) =>
+                m.messageType == MessageType.file &&
+                (m.mediaUrl ?? '').isNotEmpty,
+          )
+          .toList()
+          .reversed
+          .toList();
+      if (docs.isEmpty) {
+        return const _EmptyState(text: 'No documents in this chat');
+      }
+      return Column(
+        children: [
+          for (final m in docs) ...[
+            _DocumentRow(
+              message: m,
+              resolveUrl: (raw) => _resolveMediaTileUrl(raw, m.messageType),
+            ),
+            const Divider(height: 1, color: Color(0xFF1E1E1E)),
+          ],
+        ],
+      );
+    }
+
+    if (_tabIndex == 2) {
+      final links = list
+          .where(
+            (m) =>
+                m.messageType == MessageType.text &&
+                (m.text ?? '').toLowerCase().contains('http'),
+          )
+          .map((m) => m.text!.trim())
+          .where((t) => t.isNotEmpty)
+          .toList()
+          .reversed
+          .toList();
+      if (links.isEmpty) {
+        return const _EmptyState(text: 'No links shared');
+      }
+      return Column(
+        children: [
+          for (final t in links) ...[
+            _LinkCard(urlText: t),
+            const SizedBox(height: 10),
+          ],
+        ],
+      );
+    }
+
+    final voices = list
+        .where(
+          (m) =>
+              m.messageType == MessageType.audio &&
+              (m.mediaUrl ?? '').isNotEmpty,
+        )
+        .toList()
+        .reversed
+        .toList();
+    if (voices.isEmpty) {
+      return const _EmptyState(text: 'No voice messages');
+    }
+    return Column(
+      children: [
+        for (final m in voices) ...[
+          _VoiceCard(
+            message: m,
+            resolveUrl: (raw) => _resolveMediaTileUrl(raw, m.messageType),
+          ),
+          const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+
+  Future<String> _resolveMediaTileUrl(String raw, MessageType type) async {
+    if (raw.contains('://')) {
+      return SupabaseService.instance.resolveUrl(directUrl: raw);
+    }
+    final bucket = (type == MessageType.audio)
+        ? StorageService().audioBucket
+        : StorageService().mediaBucket;
+    return SupabaseService.instance.resolveUrl(bucket: bucket, path: raw);
+  }
+
+  void _openMediaViewer(
+    BuildContext context,
+    List<MessageModel> items,
+    int start,
+  ) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _MediaViewer(
+          items: items,
+          initialIndex: start,
+          resolveUrl: (raw, type) => _resolveMediaTileUrl(raw, type),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickActionBar extends StatelessWidget {
+  final VoidCallback onCall;
+  final VoidCallback onVideo;
+  final VoidCallback onSearch;
+  final VoidCallback onMute;
+  const _QuickActionBar({
+    required this.onCall,
+    required this.onVideo,
+    required this.onSearch,
+    required this.onMute,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111111),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _QuickAction(icon: Icons.call_outlined, label: 'Call', onTap: onCall),
+          _QuickAction(
+            icon: Icons.videocam_outlined,
+            label: 'Video',
+            onTap: onVideo,
+          ),
+          _QuickAction(
+            icon: Icons.search_rounded,
+            label: 'Search',
+            onTap: onSearch,
+          ),
+          _QuickAction(
+            icon: Icons.notifications_off_outlined,
+            label: 'Mute',
+            onTap: onMute,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  const _QuickAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: SizedBox(
+        width: 64,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 20, color: Colors.white),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaTabs extends StatelessWidget {
+  final int index;
+  final ValueChanged<int> onChanged;
+  const _MediaTabs({required this.index, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        _IconTab(
+          icon: Icons.photo_library_outlined,
+          active: index == 0,
+          onTap: () => onChanged(0),
+        ),
+        _IconTab(
+          icon: Icons.description_outlined,
+          active: index == 1,
+          onTap: () => onChanged(1),
+        ),
+        _IconTab(
+          icon: Icons.link_outlined,
+          active: index == 2,
+          onTap: () => onChanged(2),
+        ),
+        _IconTab(
+          icon: Icons.mic_none_outlined,
+          active: index == 3,
+          onTap: () => onChanged(3),
+        ),
+      ],
+    );
+  }
+}
+
+class _IconTab extends StatelessWidget {
+  final IconData icon;
+  final bool active;
+  final VoidCallback onTap;
+  const _IconTab({
+    required this.icon,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = active ? Colors.white : const Color(0xFF7A7A7A);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: SizedBox(
+        width: 56,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: c),
+            const SizedBox(height: 8),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              height: 2,
+              width: 28,
+              decoration: BoxDecoration(
+                color: active ? const Color(0xFFC74B6C) : Colors.transparent,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaGrid extends StatelessWidget {
+  final List<MessageModel> items;
+  final Future<String> Function(String raw, MessageType type) resolveUrl;
+  final void Function(List<MessageModel> items, int start) onOpen;
+  const _MediaGrid({
+    required this.items,
+    required this.resolveUrl,
+    required this.onOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 2,
+        crossAxisSpacing: 2,
+      ),
+      itemCount: items.length,
+      itemBuilder: (context, i) {
+        final m = items[i];
+        final raw = m.mediaUrl ?? '';
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: Material(
+            color: const Color(0xFF151515),
+            child: InkWell(
+              onTap: () => onOpen(items, i),
+              child: FutureBuilder<String>(
+                future: resolveUrl(raw, m.messageType),
+                builder: (context, snap) {
+                  final resolved = snap.data;
+                  if (resolved == null || resolved.isEmpty) {
+                    return const ColoredBox(color: Color(0xFF151515));
+                  }
+                  if (m.messageType == MessageType.video) {
+                    return Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _VideoFrameThumb(url: resolved),
+                        const Center(
+                          child: Icon(
+                            Icons.play_circle_fill,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+                  return CachedNetworkImage(
+                    imageUrl: resolved,
+                    fit: BoxFit.cover,
+                    fadeInDuration: const Duration(milliseconds: 150),
+                    placeholder: (context, _) =>
+                        const ColoredBox(color: Color(0xFF151515)),
+                    errorWidget: (context, _, __) =>
+                        const ColoredBox(color: Color(0xFF151515)),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _VideoFrameThumb extends StatefulWidget {
+  final String url;
+  const _VideoFrameThumb({required this.url});
+
+  @override
+  State<_VideoFrameThumb> createState() => _VideoFrameThumbState();
+}
+
+class _VideoFrameThumbState extends State<_VideoFrameThumb> {
+  VideoPlayerController? _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  @override
+  void didUpdateWidget(covariant _VideoFrameThumb oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      _dispose();
+      _init();
+    }
+  }
+
+  Future<void> _init() async {
+    final c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _c = c;
+    try {
+      await c.initialize();
+      await c.pause();
+      if (mounted) setState(() {});
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  void _dispose() {
+    final c = _c;
+    _c = null;
+    c?.dispose();
+  }
+
+  @override
+  void dispose() {
+    _dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_c != null && _c!.value.isInitialized) {
+      return FittedBox(
+        fit: BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          width: _c!.value.size.width,
+          height: _c!.value.size.height,
+          child: VideoPlayer(_c!),
+        ),
+      );
+    }
+    return const ColoredBox(color: Color(0xFF151515));
+  }
+}
+
+class _MediaViewer extends StatefulWidget {
+  final List<MessageModel> items;
+  final int initialIndex;
+  final Future<String> Function(String raw, MessageType type) resolveUrl;
+  const _MediaViewer({
+    required this.items,
+    required this.initialIndex,
+    required this.resolveUrl,
+  });
+
+  @override
+  State<_MediaViewer> createState() => _MediaViewerState();
+}
+
+class _MediaViewerState extends State<_MediaViewer> {
+  late final PageController _pc;
+
+  @override
+  void initState() {
+    super.initState();
+    _pc = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pc.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            onPressed: () {},
+          ),
+          IconButton(icon: const Icon(Icons.share_outlined), onPressed: () {}),
+        ],
+      ),
+      body: PageView.builder(
+        controller: _pc,
+        itemCount: widget.items.length,
+        itemBuilder: (context, i) {
+          final m = widget.items[i];
+          final raw = m.mediaUrl ?? '';
+          return FutureBuilder<String>(
+            future: widget.resolveUrl(raw, m.messageType),
+            builder: (context, snap) {
+              final resolved = snap.data;
+              if (resolved == null || resolved.isEmpty) {
+                return const Center(
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.white70,
+                    size: 48,
+                  ),
+                );
+              }
+              if (m.messageType == MessageType.video) {
+                return Center(child: _VideoFullscreenViewer(url: resolved));
+              }
+              return PhotoView.customChild(
+                child: Image.network(resolved, fit: BoxFit.contain),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _VideoFullscreenViewer extends StatefulWidget {
+  final String url;
+  const _VideoFullscreenViewer({required this.url});
+
+  @override
+  State<_VideoFullscreenViewer> createState() => _VideoFullscreenViewerState();
+}
+
+class _VideoFullscreenViewerState extends State<_VideoFullscreenViewer> {
+  VideoPlayerController? _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    final c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _c = c;
+    try {
+      await c.initialize();
+      await c.setLooping(true);
+      await c.play();
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _c?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _c;
+    if (c == null || !c.value.isInitialized) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
+    return AspectRatio(aspectRatio: c.value.aspectRatio, child: VideoPlayer(c));
+  }
+}
+
+class _DocumentRow extends StatelessWidget {
+  final MessageModel message;
+  final Future<String> Function(String raw) resolveUrl;
+  const _DocumentRow({required this.message, required this.resolveUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final raw = message.mediaUrl ?? '';
+    final name = raw.split('/').last;
+    final ext = name.contains('.')
+        ? name.split('.').last.toUpperCase()
+        : 'FILE';
+    final size = (message.mediaSize != null && message.mediaSize! > 0)
+        ? _fmtSize(message.mediaSize!)
+        : '';
+    final meta = size.isEmpty ? ext : '$ext • $size';
+    return SizedBox(
+      height: 64,
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: const Color(0xFF151515),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            alignment: Alignment.center,
+            child: const Icon(
+              Icons.description_outlined,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  meta,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF9A9A9A),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: () async {
+              final resolved = await resolveUrl(raw);
+              await launchUrl(
+                Uri.parse(resolved),
+                mode: LaunchMode.externalApplication,
+              );
+            },
+            icon: const Icon(Icons.download_rounded, color: Colors.white),
           ),
         ],
       ),
     );
   }
 
-  Widget _empty(String text) => SizedBox(
-    height: 40,
-    child: Center(
-      child: Text(
-        text,
-        style: const TextStyle(color: AppColors.navy, fontSize: 12),
-      ),
-    ),
-  );
+  String _fmtSize(int bytes) {
+    const kb = 1024;
+    const mb = 1024 * 1024;
+    if (bytes >= mb) return '${(bytes / mb).toStringAsFixed(1)} MB';
+    if (bytes >= kb) return '${(bytes / kb).toStringAsFixed(0)} KB';
+    return '$bytes B';
+  }
 }
 
-class _NotchedActionsBar extends StatelessWidget {
-  final double avatarRadius;
-  final double gap;
-  final double height;
-  final String title;
-  final String subtitle;
-  final VoidCallback onCall;
-  final VoidCallback onVideo;
+class _LinkCard extends StatelessWidget {
+  final String urlText;
+  const _LinkCard({required this.urlText});
 
-  const _NotchedActionsBar({
-    required this.avatarRadius,
-    required this.gap,
-    required this.height,
+  @override
+  Widget build(BuildContext context) {
+    final uri = Uri.tryParse(urlText);
+    final domain = uri?.host.isNotEmpty == true ? uri!.host : urlText;
+    return InkWell(
+      onTap: () async {
+        final u = Uri.tryParse(urlText);
+        if (u == null) return;
+        await launchUrl(u, mode: LaunchMode.externalApplication);
+      },
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF111111),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              urlText,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              domain,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFF9A9A9A), fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VoiceCard extends StatelessWidget {
+  final MessageModel message;
+  final Future<String> Function(String raw) resolveUrl;
+  const _VoiceCard({required this.message, required this.resolveUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111111),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: const BoxDecoration(
+              color: Color(0xFFC74B6C),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Container(
+              height: 18,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E1E1E),
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          const Text(
+            '0:00',
+            style: TextStyle(color: Color(0xFF9A9A9A), fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final bool danger;
+  final VoidCallback onTap;
+  const _SettingsTile({
+    required this.icon,
     required this.title,
-    required this.subtitle,
-    required this.onCall,
-    required this.onVideo,
+    required this.onTap,
+    this.danger = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final notch = avatarRadius + gap;
-    // Place content ~1.5 lines below the bottom of the circular notch
-    final topInset = notch + 28;
-    return ConstrainedBox(
-      constraints: BoxConstraints(minHeight: height),
-      child: CustomPaint(
-        painter: _ActionsBarPainter(
-          color: AppColors.navy,
-          cornerRadius: 18,
-          notchRadius: notch,
-          shadowColor: Colors.black.withOpacity(0.14),
-        ),
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(16, topInset, 16, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // Name
-              Text(
+    final c = danger ? const Color(0xFFE24C4C) : Colors.white;
+    return InkWell(
+      onTap: onTap,
+      child: SizedBox(
+        height: 52,
+        child: Row(
+          children: [
+            Icon(icon, color: c, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
                 title,
-                textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
+                style: TextStyle(
+                  color: c,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
-              if (subtitle.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  subtitle,
-                  textAlign: TextAlign.center,
-                  softWrap: true,
-                  style: const TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-              ],
-              const SizedBox(height: 32),
-              // Icons centered with decent spacing
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _iconBtn(Icons.videocam_rounded, onVideo),
-                  const SizedBox(width: 26),
-                  _iconBtn(Icons.call_rounded, onCall),
-                  const SizedBox(width: 26),
-                  PopupMenuButton<String>(
-                    tooltip: 'More',
-                    offset: const Offset(0, 8),
-                    position: PopupMenuPosition.under,
-                    icon: const Icon(
-                      Icons.more_vert_rounded,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                    color: Colors.white,
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(
-                        value: 'block',
-                        child: Text(
-                          'Block',
-                          style: TextStyle(color: Colors.black),
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'report',
-                        child: Text(
-                          'Report',
-                          style: TextStyle(color: Colors.black),
-                        ),
-                      ),
-                    ],
-                    onSelected: (v) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(v == 'block' ? 'Blocked' : 'Reported'),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
+            ),
+            Icon(Icons.chevron_right, color: c.withValues(alpha: 0.9)),
+          ],
         ),
       ),
     );
   }
-
-  Widget _iconBtn(IconData icon, VoidCallback onTap) => InkResponse(
-    onTap: onTap,
-    radius: 28,
-    splashColor: AppColors.white.withOpacity(0.12),
-    highlightColor: Colors.transparent,
-    child: Icon(icon, color: Colors.white, size: 24),
-  );
 }
 
-class _ActionsBarPainter extends CustomPainter {
-  final Color color;
-  final double cornerRadius;
-  final double notchRadius;
-  final Color shadowColor;
-
-  _ActionsBarPainter({
-    required this.color,
-    required this.cornerRadius,
-    required this.notchRadius,
-    required this.shadowColor,
-  });
+class _BubbleSizeSlider extends StatelessWidget {
+  final double value;
+  final ValueChanged<double> onChanged;
+  const _BubbleSizeSlider({required this.value, required this.onChanged});
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-
-    final rrect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(0, 0, w, h),
-      Radius.circular(cornerRadius),
+  Widget build(BuildContext context) {
+    return SliderTheme(
+      data: SliderTheme.of(context).copyWith(
+        trackHeight: 4,
+        activeTrackColor: const Color(0xFFC74B6C),
+        inactiveTrackColor: const Color(0xFF1E1E1E),
+        thumbColor: const Color(0xFFC74B6C),
+        overlayColor: const Color(0xFFC74B6C).withValues(alpha: 0.12),
+      ),
+      child: Slider(
+        min: 1.0,
+        max: 1.6,
+        divisions: 12,
+        value: value.clamp(1.0, 1.6),
+        onChanged: onChanged,
+      ),
     );
-
-    final rectPath = Path()..addRRect(rrect);
-
-    final notchPath = Path()
-      ..addOval(Rect.fromCircle(center: Offset(w / 2, 0), radius: notchRadius));
-
-    final path = Path.combine(ui.PathOperation.difference, rectPath, notchPath);
-
-    canvas.drawShadow(path, shadowColor, 12, false);
-    final paint = Paint()..color = color;
-    canvas.drawPath(path, paint);
   }
+}
+
+class _EmptyState extends StatelessWidget {
+  final String text;
+  const _EmptyState({required this.text});
 
   @override
-  bool shouldRepaint(covariant _ActionsBarPainter oldDelegate) {
-    return oldDelegate.color != color ||
-        oldDelegate.cornerRadius != cornerRadius ||
-        oldDelegate.notchRadius != notchRadius ||
-        oldDelegate.shadowColor != shadowColor;
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 26),
+      child: Center(
+        child: Text(
+          text,
+          style: const TextStyle(color: Color(0xFF9A9A9A), fontSize: 13),
+        ),
+      ),
+    );
+  }
+}
+
+class _TabSkeleton extends StatelessWidget {
+  final int index;
+  const _TabSkeleton({required this.index});
+
+  @override
+  Widget build(BuildContext context) {
+    if (index == 0) {
+      return GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 2,
+          crossAxisSpacing: 2,
+        ),
+        itemCount: 9,
+        itemBuilder: (_, __) => ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: const ColoredBox(color: Color(0xFF151515)),
+        ),
+      );
+    }
+    if (index == 1) {
+      return Column(
+        children: List.generate(
+          4,
+          (i) => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Container(
+              height: 64,
+              decoration: BoxDecoration(
+                color: const Color(0xFF151515),
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return Column(
+      children: List.generate(
+        3,
+        (i) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Container(
+            height: 72,
+            decoration: BoxDecoration(
+              color: const Color(0xFF151515),
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../../theme/theme.dart';
 import '../../screens/auth/landing_screen.dart';
 
@@ -22,13 +21,13 @@ class _ModChatSplashScreenState extends State<ModChatSplashScreen>
 
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 2),
+      duration: const Duration(milliseconds: 800),
     );
 
     _logoScale = Tween<double>(
-      begin: 0.7,
+      begin: 0.9,
       end: 1.0,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutExpo));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
 
     _controller.forward();
 
@@ -51,8 +50,9 @@ class _ModChatSplashScreenState extends State<ModChatSplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.background,
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -60,61 +60,36 @@ class _ModChatSplashScreenState extends State<ModChatSplashScreen>
             ScaleTransition(
               scale: _logoScale,
               child: Container(
-                padding: const EdgeInsets.all(40),
+                width: 88,
+                height: 88,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.55),
-                  borderRadius: BorderRadius.circular(40),
-                  border: Border.all(color: AppColors.background, width: 2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.background.withOpacity(0.15),
-                      blurRadius: 30,
-                      spreadRadius: 10,
-                    ),
-                  ],
-                  backgroundBlendMode: BlendMode.overlay,
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: AppColors.outline, width: 1),
                 ),
-                child: Icon(
+                alignment: Alignment.center,
+                child: const Icon(
                   Icons.chat_bubble_rounded,
-                  size: 110,
-                  color: Colors.black.withOpacity(0.85),
+                  size: 34,
+                  color: AppColors.highlight,
                 ),
               ),
             ),
 
-            const SizedBox(height: 40),
+            const SizedBox(height: 20),
 
-            Text(
-              "ModChat",
-              style: GoogleFonts.poppins(
-                fontSize: 32,
-                fontWeight: FontWeight.w600,
-                color: Colors.black,
-              ),
-            ),
+            Text('ModChat', style: textTheme.titleLarge),
 
             const SizedBox(height: 6),
 
-            Text(
-              "Modern Messaging Experience",
-              style: GoogleFonts.poppins(
-                fontSize: 15,
-                fontWeight: FontWeight.w400,
-                color: Colors.black,
-              ),
-            ),
+            Text('Modern Messaging Experience', style: textTheme.bodySmall),
 
-            const SizedBox(height: 50),
+            const SizedBox(height: 34),
 
             Text(
-              "From\nProject ModChat",
+              'From\nProject ModChat',
               textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(
-                height: 1.3,
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: Colors.black,
-              ),
+              style: textTheme.bodySmall?.copyWith(height: 1.3),
             ),
           ],
         ),

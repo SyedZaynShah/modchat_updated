@@ -75,24 +75,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       backgroundColor: AppColors.background,
       body: Stack(
         children: [
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [AppColors.bgTop, AppColors.bgBottom],
-                ),
-              ),
-            ),
-          ),
           AnimatedOpacity(
             opacity: _anim ? 1 : 0,
             duration: const Duration(milliseconds: 280),
             child: Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
+                  horizontal: 16,
                   vertical: 24,
                 ),
                 child: ConstrainedBox(
@@ -100,24 +89,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      AnimatedScale(
-                        scale: _anim ? 1 : 0.95,
-                        duration: const Duration(milliseconds: 280),
-                        curve: Curves.easeOutCubic,
-                        child: Container(
-                          width: 340,
-                          height: 340,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: RadialGradient(
-                              colors: [
-                                AppColors.navy.withOpacity(0.10),
-                                AppColors.background.withOpacity(0.0),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
                       AnimatedSlide(
                         offset: _anim ? Offset.zero : const Offset(0, 0.05),
                         duration: const Duration(milliseconds: 280),
@@ -131,7 +102,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               Text(
                                 'Hey, Welcome Back',
                                 style: const TextStyle(
-                                  fontSize: 26,
+                                  fontSize: 22,
                                   fontWeight: FontWeight.w600,
                                   color: AppColors.highlight,
                                   height: 1.1,
@@ -141,10 +112,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               Text(
                                 'Sign in to continue.',
                                 style: TextStyle(
-                                  fontSize: 13.5,
-                                  color: AppColors.textSecondary.withOpacity(
-                                    0.92,
-                                  ),
+                                  fontSize: 14,
+                                  color: AppColors.textSecondary,
                                   height: 1.35,
                                 ),
                               ),
@@ -174,9 +143,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   'Forgot password?',
                                   style: TextStyle(
                                     fontSize: 12.5,
-                                    color: AppColors.textSecondary.withOpacity(
-                                      0.86,
-                                    ),
+                                    color: AppColors.textSecondary,
                                   ),
                                 ),
                               ),
@@ -202,7 +169,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   Expanded(
                                     child: Divider(
                                       height: 1,
-                                      color: AppColors.outline.withOpacity(0.7),
+                                      color: AppColors.outline,
                                     ),
                                   ),
                                   Padding(
@@ -212,8 +179,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     child: Text(
                                       'or continue with',
                                       style: TextStyle(
-                                        color: AppColors.textSecondary
-                                            .withOpacity(0.86),
+                                        color: AppColors.textSecondary,
                                         fontSize: 12.5,
                                       ),
                                     ),
@@ -221,7 +187,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   Expanded(
                                     child: Divider(
                                       height: 1,
-                                      color: AppColors.outline.withOpacity(0.7),
+                                      color: AppColors.outline,
                                     ),
                                   ),
                                 ],
@@ -286,13 +252,10 @@ class _GoogleButtonState extends State<_GoogleButton> {
         duration: const Duration(milliseconds: 130),
         curve: Curves.easeOutCubic,
         child: Container(
-          height: 52,
+          height: 44,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(
-              color: AppColors.outline.withOpacity(0.9),
-              width: 1,
-            ),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: AppColors.outlineStrong, width: 1),
             color: Colors.transparent,
           ),
           alignment: Alignment.center,
@@ -320,8 +283,8 @@ class _GoogleButtonState extends State<_GoogleButton> {
               Text(
                 'Continue with Google',
                 style: TextStyle(
-                  color: AppColors.highlight.withOpacity(0.95),
-                  fontWeight: FontWeight.w600,
+                  color: AppColors.highlight,
+                  fontWeight: FontWeight.w500,
                   fontSize: 14,
                 ),
               ),
@@ -363,23 +326,10 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
         duration: const Duration(milliseconds: 130),
         curve: Curves.easeOutCubic,
         child: Container(
-          height: 52,
+          height: 44,
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.45),
-                blurRadius: 26,
-                spreadRadius: -16,
-                offset: const Offset(0, 18),
-              ),
-              BoxShadow(
-                color: Colors.white.withOpacity(0.06),
-                blurRadius: 1,
-                offset: const Offset(0, 1),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(22),
           ),
           alignment: Alignment.center,
           child: widget.loading
@@ -388,16 +338,15 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
                   width: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Color(0xFF121417),
+                    color: Colors.black,
                   ),
                 )
               : Text(
                   widget.label,
                   style: const TextStyle(
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF121417),
-                    letterSpacing: 0.2,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black,
                   ),
                 ),
         ),

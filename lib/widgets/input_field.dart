@@ -40,21 +40,17 @@ class InputField extends StatefulWidget {
 
 class _InputFieldState extends State<InputField> {
   final _controller = TextEditingController();
-  bool _sending = false;
   bool _hasText = false;
 
   // Voice note state
   final AudioRecorder _rec = AudioRecorder();
   bool _recording = false;
-  bool _locked = false;
-  bool _cancelHint = false;
   DateTime? _recStart;
   String? _recPath;
   StreamSubscription<Amplitude>? _ampSub;
   Timer? _tick;
   double _amp = 0.0; // 0..1
   final List<double> _wave = <double>[]; // recent amps
-  Offset? _gestureStart;
 
   @override
   void dispose() {
@@ -269,8 +265,6 @@ class _InputFieldState extends State<InputField> {
       });
       setState(() {
         _recording = true;
-        _cancelHint = false;
-        if (!_locked) _locked = false;
       });
     } catch (e) {
       if (!mounted) return;
@@ -294,8 +288,6 @@ class _InputFieldState extends State<InputField> {
     if (!mounted) return;
     setState(() {
       _recording = false;
-      _locked = false;
-      _cancelHint = false;
       _recPath = null;
     });
   }
@@ -310,8 +302,6 @@ class _InputFieldState extends State<InputField> {
     if (!mounted) return;
     setState(() {
       _recording = false;
-      _locked = false;
-      _cancelHint = false;
     });
     if (path == null) return;
     final bytes = await File(path).readAsBytes();
@@ -327,209 +317,151 @@ class _InputFieldState extends State<InputField> {
     } catch (_) {}
   }
 
-  void _onLongPressStart(LongPressStartDetails d) {
-    _gestureStart = d.globalPosition;
-    _locked = false;
-    _cancelHint = false;
-    _startRec();
-  }
-
-  void _onLongPressMove(LongPressMoveUpdateDetails d) {
-    if (_gestureStart == null) return;
-    final dx = d.globalPosition.dx - _gestureStart!.dx;
-    final dy = d.globalPosition.dy - _gestureStart!.dy;
-    bool changed = false;
-    if (dx < -60 && !_cancelHint) {
-      _cancelHint = true;
-      changed = true;
-    }
-    if (dy < -60 && !_locked) {
-      _locked = true;
-      changed = true;
-    }
-    if (changed && mounted) setState(() {});
-  }
-
-  void _onLongPressEnd(LongPressEndDetails d) {
-    if (_locked) {
-      // keep recording; user will tap send/delete
-      return;
-    }
-    if (_cancelHint) {
-      _cancelRec();
-    } else {
-      _finishRecSend();
-    }
-  }
-
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
-    setState(() => _sending = true);
-    try {
-      await widget.onSend(text);
-      _controller.clear();
-      if (_hasText) {
-        setState(() => _hasText = false);
-        widget.onTypingChanged?.call(false);
-      }
-    } finally {
-      if (mounted) setState(() => _sending = false);
+
+    // Clear immediately so the UI feels instant and the user can keep typing.
+    _controller.clear();
+    if (_hasText) {
+      setState(() => _hasText = false);
+      widget.onTypingChanged?.call(false);
     }
+
+    widget.onSend(text).catchError((e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Send failed: $e')));
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final composer = !_recording
-        ? Row(
-            children: [
-              IconButton(
-                onPressed: _pickFile,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                icon: const Icon(
-                  Icons.attach_file,
-                  color: AppColors.navy,
-                  size: 22,
-                ),
-              ),
-              Expanded(
-                child: TextField(
-                  controller: _controller,
-                  minLines: 1,
-                  maxLines: 5,
-                  onChanged: (v) {
-                    final has = v.trim().isNotEmpty;
-                    if (has != _hasText) {
-                      setState(() => _hasText = has);
-                      widget.onTypingChanged?.call(has);
-                    }
-                  },
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(vertical: 8),
-                    hintText: 'Type a message',
-                    border: InputBorder.none,
-                    filled: true,
-                    fillColor: Colors.transparent,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 4),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                transitionBuilder: (child, anim) => ScaleTransition(
-                  scale: anim,
-                  child: FadeTransition(opacity: anim, child: child),
-                ),
-                child: _sending
-                    ? const SizedBox(
-                        key: ValueKey('sending'),
-                        width: 28,
-                        height: 28,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : (_hasText
-                          ? IconButton(
-                              key: const ValueKey('send'),
-                              onPressed: _send,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                minWidth: 32,
-                                minHeight: 32,
-                              ),
-                              icon: const Icon(
-                                Icons.send,
-                                color: AppColors.navy,
-                                size: 22,
-                              ),
-                            )
-                          : GestureDetector(
-                              key: const ValueKey('mic'),
-                              onTap: () async {
-                                // single tap => free-hand locked recording
-                                await _startRec();
-                                if (mounted) setState(() => _locked = true);
-                              },
-                              onLongPressStart: _onLongPressStart,
-                              onLongPressMoveUpdate: _onLongPressMove,
-                              onLongPressEnd: _onLongPressEnd,
-                              child: const Padding(
-                                padding: EdgeInsets.all(4.0),
-                                child: Icon(
-                                  Icons.mic,
-                                  color: AppColors.navy,
-                                  size: 22,
-                                ),
-                              ),
-                            )),
-              ),
-            ],
-          )
-        : Row(
-            children: [
-              // Recording UI
-              Expanded(
-                child: Row(
-                  children: [
-                    if (!_locked) ...[
-                      const Icon(
-                        Icons.arrow_back_ios_new,
-                        size: 16,
-                        color: Colors.black54,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _cancelHint
-                            ? 'Release to cancel'
-                            : 'Slide left to cancel • Slide up to lock',
-                        style: const TextStyle(
-                          color: Colors.black54,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                    ],
-                    if (_locked) const Spacer(),
-                    _Waveform(values: _wave),
-                    const SizedBox(width: 8),
-                    Text(
-                      _fmtElapsed(),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.navy,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (_locked) ...[
-                IconButton(
-                  onPressed: _cancelRec,
-                  icon: const Icon(Icons.delete_outline, color: Colors.black),
-                ),
-                IconButton(
-                  onPressed: _finishRecSend,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
-                  ),
-                  icon: const Icon(Icons.send, color: AppColors.navy, size: 22),
-                ),
-              ],
-            ],
-          );
-
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      height: 52,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: AppColors.navy, width: 1.5),
+        color: const Color(0xFF0F0F0F),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
       ),
-      child: composer,
+      child: _recording ? _buildRecordingUI() : _buildNormalUI(),
+    );
+  }
+
+  Widget _buildNormalUI() {
+    return Row(
+      children: [
+        IconButton(
+          onPressed: _pickFile,
+          icon: const Icon(
+            Icons.attach_file,
+            color: Color(0xFF9A9A9A),
+            size: 20,
+          ),
+        ),
+        Expanded(
+          child: TextField(
+            controller: _controller,
+            minLines: 1,
+            maxLines: 4,
+            onChanged: (v) {
+              final has = v.trim().isNotEmpty;
+              if (has != _hasText) {
+                setState(() => _hasText = has);
+                widget.onTypingChanged?.call(has);
+              }
+            },
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            decoration: const InputDecoration(
+              hintText: 'Message',
+              hintStyle: TextStyle(color: Color(0xFF8A8A8A), fontSize: 14),
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 10,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        _buildActionButton(),
+      ],
+    );
+  }
+
+  Widget _buildRecordingUI() {
+    return Row(
+      children: [
+        Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              _Waveform(values: _wave),
+              const SizedBox(width: 10),
+              Text(
+                _fmtElapsed(),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          onPressed: _cancelRec,
+          icon: const Icon(
+            Icons.delete_outline,
+            color: Color(0xFFC74B6C),
+            size: 20,
+          ),
+        ),
+        const SizedBox(width: 2),
+        GestureDetector(
+          onTap: _finishRecSend,
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.send, color: Colors.black, size: 20),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActionButton() {
+    return GestureDetector(
+      onTap: () {
+        if (_hasText) {
+          _send();
+          return;
+        }
+        if (!_recording) {
+          _startRec();
+        }
+      },
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(
+          _hasText ? Icons.send : Icons.mic,
+          color: Colors.black,
+          size: 20,
+        ),
+      ),
     );
   }
 

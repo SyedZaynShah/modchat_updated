@@ -55,6 +55,8 @@ dependencies:
   intl: ^0.20.2
   http: ^1.6.0
   photo_view: ^0.15.0
+  cached_network_image: ^3.4.1
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
@@ -82,7 +84,7 @@ flutter:
   assets:
     - .env
     - .env.example
-    - lib/assets/background.png
+    - lib/assets/background.jpg
     - lib/assets/login.png
 
   # An image asset can refer to one or more resolution-specific "variants", see

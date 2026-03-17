@@ -24,6 +24,7 @@ class _LandingScreenState extends State<LandingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -36,7 +37,7 @@ class _LandingScreenState extends State<LandingScreen> {
             duration: const Duration(milliseconds: 280),
             curve: Curves.easeOutCubic,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
               child: Column(
                 children: [
                   Expanded(
@@ -52,15 +53,10 @@ class _LandingScreenState extends State<LandingScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
+                  Text(
                     'Social Chatter Team.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.highlight,
-                      height: 1.1,
-                    ),
+                    style: textTheme.titleLarge?.copyWith(height: 1.1),
                   ),
                   const SizedBox(height: 10),
                   Text(
@@ -69,9 +65,9 @@ class _LandingScreenState extends State<LandingScreen> {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 13.5,
+                      fontSize: 14,
                       height: 1.35,
-                      color: AppColors.textSecondary.withOpacity(0.92),
+                      color: AppColors.textSecondary,
                       fontWeight: FontWeight.w400,
                     ),
                   ),
@@ -125,33 +121,19 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
         duration: const Duration(milliseconds: 130),
         curve: Curves.easeOutCubic,
         child: Container(
-          height: 52,
+          height: 44,
           width: double.infinity,
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.45),
-                blurRadius: 26,
-                spreadRadius: -16,
-                offset: const Offset(0, 18),
-              ),
-              BoxShadow(
-                color: Colors.white.withOpacity(0.06),
-                blurRadius: 1,
-                offset: const Offset(0, 1),
-              ),
-            ],
+            color: AppColors.highlight,
+            borderRadius: BorderRadius.circular(22),
           ),
           alignment: Alignment.center,
           child: Text(
             widget.label,
             style: const TextStyle(
-              fontSize: 15.5,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF121417),
-              letterSpacing: 0.2,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.black,
             ),
           ),
         ),

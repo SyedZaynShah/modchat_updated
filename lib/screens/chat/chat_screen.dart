@@ -8,6 +8,7 @@ import '../../providers/chat_providers.dart';
 import '../../providers/user_providers.dart';
 import '../../theme/theme.dart';
 import 'chat_detail_screen.dart';
+import 'group_chat_detail_screen.dart';
 
 class ChatScreen extends ConsumerWidget {
   const ChatScreen({super.key});
@@ -42,6 +43,8 @@ class ChatScreen extends ConsumerWidget {
             itemBuilder: (context, index) {
               final d = filteredDocs[index];
               final data = d.data();
+              final type = (data['type'] as String?) ?? 'dm';
+              final groupName = data['name'] as String?;
               final members = List<String>.from(data['members'] as List);
               final peerId = members.firstWhere(
                 (m) => m != me,
@@ -55,6 +58,8 @@ class ChatScreen extends ConsumerWidget {
                 peerId: peerId,
                 last: last,
                 time: ts,
+                chatType: type,
+                groupName: groupName,
               );
             },
           );
@@ -99,9 +104,12 @@ class _Avatar extends StatelessWidget {
     return FutureBuilder<ImageProvider?>(
       future: _resolve(url),
       builder: (context, snap) {
+        final img = snap.data;
+        final hasImage = img != null;
         return CircleAvatar(
           backgroundColor: AppColors.sinopia.withValues(alpha: 0.25),
-          backgroundImage: snap.data,
+          backgroundImage: img,
+          onBackgroundImageError: hasImage ? (_, __) {} : null,
           child: (snap.data != null)
               ? null
               : const Icon(Icons.person, color: Colors.white70),
@@ -116,16 +124,48 @@ class _Tile extends ConsumerWidget {
   final String peerId;
   final String? last;
   final DateTime? time;
+  final String chatType;
+  final String? groupName;
   const _Tile({
     super.key,
     required this.chatId,
     required this.peerId,
     this.last,
     this.time,
+    this.chatType = 'dm',
+    this.groupName,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (chatType == 'group') {
+      final title = (groupName ?? '').trim().isNotEmpty ? groupName! : 'Group';
+      return ListTile(
+        onTap: () => Navigator.pushNamed(
+          context,
+          GroupChatDetailScreen.routeName,
+          arguments: {'chatId': chatId},
+        ),
+        title: Text(title, style: const TextStyle(color: Colors.white)),
+        subtitle: Text(
+          last ?? '',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white70),
+        ),
+        trailing: time != null
+            ? Text(
+                '${time!.hour.toString().padLeft(2, '0')}:${time!.minute.toString().padLeft(2, '0')}',
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              )
+            : null,
+        leading: const CircleAvatar(
+          backgroundColor: AppColors.sinopia,
+          child: Icon(Icons.group, color: Colors.white),
+        ),
+      );
+    }
+
     final user2 = ref.watch(userDocProvider(peerId));
     return user2.when(
       data: (u) => ListTile(

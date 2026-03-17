@@ -1,7 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import 'theme/theme.dart';
 import 'screens/auth/login_screen.dart';
@@ -11,6 +10,10 @@ import 'screens/auth/verify_email_screen.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/chat/chat_detail_screen.dart';
 import 'screens/chat/chat_contact_info_screen.dart';
+import 'screens/group/create_group_screen.dart';
+import 'screens/chat/group_chat_detail_screen.dart';
+import 'screens/group/group_settings_screen.dart';
+import 'screens/group/group_permissions_screen.dart';
 import 'ui/splash/splash_screen.dart';
 
 class App extends ConsumerWidget {
@@ -22,12 +25,6 @@ class App extends ConsumerWidget {
       title: 'ModChat',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.theme,
-      builder: (context, child) {
-        return DefaultTextStyle(
-          style: GoogleFonts.inter(),
-          child: child ?? const SizedBox.shrink(),
-        );
-      },
       home: const ModChatSplashScreen(),
       routes: {
         "/home": (context) => const AuthGate(),
@@ -41,6 +38,30 @@ class App extends ConsumerWidget {
               chatId: args['chatId'] as String,
               peerId: args['peerId'] as String,
             ),
+          );
+        }
+        if (settings.name == CreateGroupScreen.routeName) {
+          return MaterialPageRoute(builder: (_) => const CreateGroupScreen());
+        }
+        if (settings.name == GroupChatDetailScreen.routeName) {
+          final args = settings.arguments as Map<String, dynamic>;
+          return MaterialPageRoute(
+            builder: (_) =>
+                GroupChatDetailScreen(chatId: args['chatId'] as String),
+          );
+        }
+        if (settings.name == GroupSettingsScreen.routeName) {
+          final args = settings.arguments as Map<String, dynamic>;
+          return MaterialPageRoute(
+            builder: (_) =>
+                GroupSettingsScreen(chatId: args['chatId'] as String),
+          );
+        }
+        if (settings.name == GroupPermissionsScreen.routeName) {
+          final args = settings.arguments as Map<String, dynamic>;
+          return MaterialPageRoute(
+            builder: (_) =>
+                GroupPermissionsScreen(chatId: args['chatId'] as String),
           );
         }
         if (settings.name == ChatContactInfoScreen.routeName) {
@@ -79,26 +100,15 @@ class AuthGate extends ConsumerWidget {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Scaffold(
             backgroundColor: AppColors.background,
-            body: Stack(
-              children: [
-                Positioned.fill(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          Colors.white,
-                          AppColors.sinopia.withValues(alpha: 0.03),
-                        ],
-                      ),
-                    ),
-                  ),
+            body: const Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppColors.highlight,
                 ),
-                const Center(
-                  child: CircularProgressIndicator(color: AppColors.sinopia),
-                ),
-              ],
+              ),
             ),
           );
         }

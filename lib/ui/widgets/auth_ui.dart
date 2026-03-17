@@ -27,26 +27,8 @@ class GlassCard extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(radius),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [AppColors.cardTop, AppColors.cardBottom],
-        ),
-        border: Border.all(color: AppColors.outline.withOpacity(0.9), width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.45),
-            blurRadius: 28,
-            spreadRadius: -10,
-            offset: const Offset(0, 16),
-          ),
-          BoxShadow(
-            color: Colors.black.withOpacity(0.20),
-            blurRadius: 10,
-            spreadRadius: -8,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        color: AppColors.card,
+        border: Border.all(color: AppColors.outline, width: 1),
       ),
       child: child,
     );
@@ -68,7 +50,7 @@ class BlueButton extends StatefulWidget {
     this.loading = false,
     this.filled = true,
     this.icon,
-    this.height = 50,
+    this.height = 44,
   });
 
   @override
@@ -80,8 +62,9 @@ class _BlueButtonState extends State<BlueButton> {
 
   @override
   Widget build(BuildContext context) {
-    final fg = widget.filled ? AppColors.highlight : AppColors.highlight;
-    final border = widget.filled ? Colors.transparent : AppColors.outline;
+    final fg = widget.filled ? Colors.black : AppColors.highlight;
+    final border = widget.filled ? Colors.transparent : AppColors.outlineStrong;
+    final bg = widget.filled ? AppColors.highlight : Colors.transparent;
 
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
@@ -95,30 +78,9 @@ class _BlueButtonState extends State<BlueButton> {
         child: Container(
           height: widget.height,
           decoration: BoxDecoration(
-            gradient: widget.filled
-                ? LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      AppColors.navy.withOpacity(widget.loading ? 0.82 : 0.95),
-                      AppColors.navy.withOpacity(widget.loading ? 0.70 : 0.88),
-                    ],
-                  )
-                : const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [AppColors.cardTop, AppColors.cardBottom],
-                  ),
-            borderRadius: BorderRadius.circular(14),
+            color: bg,
+            borderRadius: BorderRadius.circular(22),
             border: Border.all(color: border, width: 1),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(widget.filled ? 0.45 : 0.30),
-                blurRadius: 26,
-                spreadRadius: -14,
-                offset: const Offset(0, 16),
-              ),
-            ],
           ),
           alignment: Alignment.center,
           child: widget.loading
@@ -127,7 +89,7 @@ class _BlueButtonState extends State<BlueButton> {
                   width: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.white,
+                    color: Colors.black,
                   ),
                 )
               : Row(
@@ -141,9 +103,8 @@ class _BlueButtonState extends State<BlueButton> {
                       widget.label,
                       style: TextStyle(
                         color: fg,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.2,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ],

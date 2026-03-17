@@ -6,6 +6,8 @@ import '../../providers/chat_providers.dart';
 import '../../providers/user_providers.dart';
 import '../../theme/theme.dart';
 import '../chat/chat_detail_screen.dart';
+import '../chat/group_chat_detail_screen.dart';
+import '../group/create_group_screen.dart';
 import 'new_contact_screen.dart';
 
 class NewChatScreen extends ConsumerStatefulWidget {
@@ -93,10 +95,9 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
                       icon: Icons.group,
                       label: 'New group',
                       onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('New group coming soon'),
-                          ),
+                        Navigator.pushNamed(
+                          context,
+                          CreateGroupScreen.routeName,
                         );
                       },
                     ),
@@ -117,6 +118,7 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
                     // Existing chats list below options
                     ...docs.map((d) {
                       final data = d.data();
+                      final type = (data['type'] as String?) ?? 'dm';
                       final members = List<String>.from(
                         data['members'] as List,
                       );
@@ -125,11 +127,14 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
                         orElse: () => me,
                       );
                       final last = data['lastMessage'] as String?;
+                      final groupName = data['name'] as String?;
                       return _ChatRow(
                         peerId: peerId,
                         chatId: d.id,
                         last: last,
                         query: _search.text.trim(),
+                        chatType: type,
+                        groupName: groupName,
                       );
                     }),
                     const SizedBox(height: 24),
@@ -203,15 +208,68 @@ class _ChatRow extends ConsumerWidget {
   final String peerId;
   final String? last;
   final String query;
+  final String chatType;
+  final String? groupName;
   const _ChatRow({
     required this.chatId,
     required this.peerId,
     required this.last,
     required this.query,
+    this.chatType = 'dm',
+    this.groupName,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (chatType == 'group') {
+      final title = (groupName ?? '').trim().isNotEmpty ? groupName! : 'Group';
+      final q = query.trim().toLowerCase();
+      if (q.isNotEmpty) {
+        final matched =
+            title.toLowerCase().contains(q) ||
+            (last ?? '').toLowerCase().contains(q);
+        if (!matched) return const SizedBox.shrink();
+      }
+
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => Navigator.pushNamed(
+            context,
+            GroupChatDetailScreen.routeName,
+            arguments: {'chatId': chatId},
+          ),
+          splashColor: AppColors.navy.withOpacity(0.08),
+          highlightColor: AppColors.navy.withOpacity(0.06),
+          child: ListTile(
+            dense: true,
+            visualDensity: const VisualDensity(vertical: -2),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 2,
+            ),
+            title: Text(
+              title,
+              style: const TextStyle(
+                color: AppColors.navy,
+                fontWeight: FontWeight.w800,
+                fontSize: 13.5,
+              ),
+            ),
+            subtitle: Text(
+              last ?? '',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            leading: CircleAvatar(
+              backgroundColor: AppColors.sinopia.withOpacity(0.25),
+              child: const Icon(Icons.group, color: AppColors.navy),
+            ),
+          ),
+        ),
+      );
+    }
+
     final user = ref.watch(userDocProvider(peerId));
     return user.when(
       data: (u) {
@@ -262,6 +320,9 @@ class _ChatRow extends ConsumerWidget {
                 backgroundColor: AppColors.sinopia.withOpacity(0.25),
                 backgroundImage: (u?.profileImageUrl?.isNotEmpty == true)
                     ? NetworkImage(u!.profileImageUrl!)
+                    : null,
+                onBackgroundImageError: (u?.profileImageUrl?.isNotEmpty == true)
+                    ? (_, __) {}
                     : null,
                 child: (u?.profileImageUrl?.isNotEmpty == true)
                     ? null

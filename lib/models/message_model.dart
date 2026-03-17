@@ -21,6 +21,16 @@ class MessageModel {
   final MessageType messageType;
   final String? mediaUrl;
   final int? mediaSize;
+  final String uploadStatus; // done | uploading | failed
+  final bool forwarded;
+  final String? originalSenderId;
+  final String? originalMessageId;
+  final String? replyToMessageId;
+  final String? replyToSenderId;
+  final String? replyToText;
+  final String? replyToMessageType;
+  final int? threadReplyCount;
+  final Map<String, int>? reactions;
   final Timestamp timestamp;
   final bool isSeen;
   final Timestamp? seenAt;
@@ -40,6 +50,16 @@ class MessageModel {
     this.text,
     this.mediaUrl,
     this.mediaSize,
+    this.uploadStatus = 'done',
+    this.forwarded = false,
+    this.originalSenderId,
+    this.originalMessageId,
+    this.replyToMessageId,
+    this.replyToSenderId,
+    this.replyToText,
+    this.replyToMessageType,
+    this.threadReplyCount,
+    this.reactions,
     this.isSeen = false,
     this.seenAt,
     this.deliveredAt,
@@ -54,6 +74,12 @@ class MessageModel {
     final text = data['text'] as String?;
     final mediaType = (data['mediaType'] as String?)?.toLowerCase();
     final legacyMessageType = data['messageType'] as String?; // backward compat
+    final uploadStatus = (data['uploadStatus'] as String?) ?? 'done';
+    final replyTo = (data['replyTo'] as Map?)?.cast<String, dynamic>();
+    final reactionsRaw = (data['reactions'] as Map?)?.cast<String, dynamic>();
+    final forwarded = (data['forwarded'] as bool?) ?? false;
+    final originalSenderId = data['originalSender'] as String?;
+    final originalMessageId = data['originalMessageId'] as String?;
     MessageType type;
     if (mediaType != null) {
       switch (mediaType) {
@@ -98,6 +124,16 @@ class MessageModel {
       messageType: type,
       mediaUrl: effectiveUrl,
       mediaSize: (data['mediaSize'] as num?)?.toInt(),
+      uploadStatus: uploadStatus,
+      forwarded: forwarded,
+      originalSenderId: originalSenderId,
+      originalMessageId: originalMessageId,
+      replyToMessageId: replyTo?['messageId'] as String?,
+      replyToSenderId: replyTo?['senderId'] as String?,
+      replyToText: replyTo?['text'] as String?,
+      replyToMessageType: replyTo?['messageType'] as String?,
+      threadReplyCount: (data['threadReplyCount'] as num?)?.toInt(),
+      reactions: _reactionCountsFromRaw(reactionsRaw),
       timestamp: data['timestamp'] as Timestamp? ?? Timestamp.now(),
       isSeen: data['isSeen'] as bool? ?? false,
       seenAt: data['seenAt'] as Timestamp?,
@@ -120,6 +156,12 @@ class MessageModel {
     final text = data['text'] as String?;
     final mediaType = (data['mediaType'] as String?)?.toLowerCase();
     final legacyMessageType = data['messageType'] as String?;
+    final uploadStatus = (data['uploadStatus'] as String?) ?? 'done';
+    final replyTo = (data['replyTo'] as Map?)?.cast<String, dynamic>();
+    final reactionsRaw = (data['reactions'] as Map?)?.cast<String, dynamic>();
+    final forwarded = (data['forwarded'] as bool?) ?? false;
+    final originalSenderId = data['originalSender'] as String?;
+    final originalMessageId = data['originalMessageId'] as String?;
     MessageType type;
     if (mediaType != null) {
       switch (mediaType) {
@@ -163,6 +205,16 @@ class MessageModel {
       messageType: type,
       mediaUrl: effectiveUrl,
       mediaSize: (data['mediaSize'] as num?)?.toInt(),
+      uploadStatus: uploadStatus,
+      forwarded: forwarded,
+      originalSenderId: originalSenderId,
+      originalMessageId: originalMessageId,
+      replyToMessageId: replyTo?['messageId'] as String?,
+      replyToSenderId: replyTo?['senderId'] as String?,
+      replyToText: replyTo?['text'] as String?,
+      replyToMessageType: replyTo?['messageType'] as String?,
+      threadReplyCount: (data['threadReplyCount'] as num?)?.toInt(),
+      reactions: _reactionCountsFromRaw(reactionsRaw),
       timestamp: data['timestamp'] as Timestamp? ?? Timestamp.now(),
       isSeen: data['isSeen'] as bool? ?? false,
       seenAt: data['seenAt'] as Timestamp?,
@@ -214,6 +266,24 @@ class MessageModel {
       return MessageType.file;
     }
     return MessageType.text;
+  }
+
+  static Map<String, int>? _reactionCountsFromRaw(
+    Map<String, dynamic>? reactionsRaw,
+  ) {
+    if (reactionsRaw == null) return null;
+    if (reactionsRaw.isEmpty) return <String, int>{};
+    final out = <String, int>{};
+    reactionsRaw.forEach((k, v) {
+      if (v is num) {
+        out[k] = v.toInt();
+      } else if (v is List) {
+        out[k] = v.length;
+      } else {
+        out[k] = 0;
+      }
+    });
+    return out;
   }
 
   Map<String, dynamic> toMap() {

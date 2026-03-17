@@ -1,160 +1,226 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/message_model.dart';
-import '../theme/theme.dart';
+import '../providers/user_providers.dart';
 import 'file_preview_widget.dart';
 
-class MessageBubble extends StatelessWidget {
+class MessageBubble extends StatefulWidget {
   final MessageModel message;
   final bool isMe;
-  final double zoom; // 1.0 = normal, >1 scales only text bubbles
+  final bool showAvatar;
 
   const MessageBubble({
     super.key,
     required this.message,
     required this.isMe,
-    this.zoom = 1.0,
+    this.showAvatar = false,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final align = isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
-    final bubbleColor = isMe ? AppColors.navy : AppColors.surface;
-    final textColor = isMe ? AppColors.white : Colors.black;
-    // Apply zoom only for text messages; others remain at 1.0
-    final z = message.messageType == MessageType.text
-        ? zoom.clamp(1.0, 1.6)
-        : 1.0;
+  State<MessageBubble> createState() => _MessageBubbleState();
+}
 
-    return Column(
-      crossAxisAlignment: align,
+class _MessageBubbleState extends State<MessageBubble>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+
+    final maxWidth = MediaQuery.of(context).size.width * 0.7;
+    final sentColor = const Color(0xFF7A1F3D);
+    final receivedColor = const Color(0xFF0F0F0F);
+
+    Widget bubble = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: widget.isMe ? sentColor : receivedColor,
+        borderRadius: BorderRadius.circular(22),
+        border: !widget.isMe
+            ? Border.all(color: const Color(0xFF1A1A1A), width: 1)
+            : null,
+      ),
+      child: _content(context),
+    );
+
+    if (widget.message.messageType != MessageType.text) {
+      bubble = ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: _content(context),
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: widget.isMe
+          ? MainAxisAlignment.end
+          : MainAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        AnimatedContainer(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.78,
+        if (!widget.isMe) ...[
+          SizedBox(
+            width: 32,
+            child: widget.showAvatar
+                ? _BubbleAvatar(senderId: widget.message.senderId)
+                : const SizedBox.shrink(),
           ),
-          decoration: BoxDecoration(
-            color: bubbleColor,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(isMe ? 16 : 4),
-              bottomRight: Radius.circular(isMe ? 4 : 16),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.highlight.withOpacity(0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          padding: EdgeInsets.symmetric(horizontal: 12 * z, vertical: 8 * z),
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          child: _content(context, textColor, z),
+          const SizedBox(width: 8),
+        ],
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: bubble,
         ),
-        const SizedBox(height: 8),
       ],
     );
   }
 
-  Widget _content(BuildContext context, Color textColor, double z) {
+  Widget _content(BuildContext context) {
+    final message = widget.message;
     if (message.isDeletedForAll) {
-      // Keep deleted label subtle and not scaled aggressively
-      final style = TextStyle(
-        fontSize: 12 * (message.messageType == MessageType.text ? z : 1.0),
-        color: textColor.withValues(alpha: 0.6),
-        fontStyle: FontStyle.italic,
-      );
-      return AnimatedDefaultTextStyle(
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOutCubic,
-        style: style,
-        child: const Text('This message was deleted.'),
+      return const Text(
+        'This message was deleted',
+        style: TextStyle(
+          fontSize: 14,
+          color: Colors.white54,
+          fontStyle: FontStyle.italic,
+        ),
       );
     }
+
+    final forwardedTag = (message.forwarded)
+        ? const Padding(
+            padding: EdgeInsets.only(bottom: 4),
+            child: Text(
+              'Forwarded',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.white70,
+                height: 1.1,
+              ),
+            ),
+          )
+        : const SizedBox.shrink();
+
     switch (message.messageType) {
       case MessageType.text:
-        final t = (message.text ?? '');
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 120),
-              curve: Curves.easeOutCubic,
-              style: TextStyle(
-                fontSize: 15 * z,
-                height: 1.25,
-                color: textColor,
+            forwardedTag,
+            Text(
+              message.text ?? '',
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.35,
+                color: Colors.white,
               ),
-              child: Text(t),
             ),
-            const SizedBox(height: 6),
-            _metaRow(textColor),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _formatTime(),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Color(0xFF9A9A9A),
+                  ),
+                ),
+                if (widget.isMe) ...[
+                  const SizedBox(width: 4),
+                  _StatusIcon(
+                    status: message.status,
+                    isPending: message.hasPendingWrites,
+                  ),
+                ],
+              ],
+            ),
           ],
         );
       case MessageType.image:
       case MessageType.video:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            forwardedTag,
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.65,
+              ),
+              child: FilePreviewWidget(message: message, isMe: widget.isMe),
+            ),
+          ],
+        );
       case MessageType.file:
       case MessageType.audio:
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            FilePreviewWidget(message: message, isMe: isMe),
-            const SizedBox(height: 6),
-            _metaRow(textColor),
+            forwardedTag,
+            FilePreviewWidget(message: message, isMe: widget.isMe),
           ],
         );
     }
   }
 
-  Widget _metaRow(Color baseColor) {
-    final timeColor = isMe
-        ? AppColors.white.withValues(alpha: 0.7)
-        : Colors.black.withValues(alpha: 0.7);
-    final List<Widget> children = [
-      Text(_formatTime(), style: TextStyle(fontSize: 10, color: timeColor)),
-    ];
-    if (isMe) {
-      children.add(const SizedBox(width: 6));
-      final isPending = message.hasPendingWrites;
-      final iconData = isPending
-          ? Icons.watch_later_outlined
-          : _statusIconData();
-      final iconColor = (!isPending && message.status == 3)
-          ? (isMe ? AppColors.white : Colors.black)
-          : timeColor;
-      children.add(Icon(iconData, size: 12, color: iconColor));
-    }
-    if (message.edited) {
-      children.add(const SizedBox(width: 6));
-      children.add(
-        Text('Edited', style: TextStyle(fontSize: 10, color: timeColor)),
-      );
-    }
-    // Return a minimal-width row so the bubble shrinks to content width
-    return Row(mainAxisSize: MainAxisSize.min, children: children);
-  }
-
-  IconData _statusIconData() {
-    switch (message.status) {
-      case 1:
-        return Icons.done;
-      case 2:
-        return Icons.done; // keep single tick for delivered
-      case 3:
-        return Icons.done_all_rounded;
-      default:
-        return Icons.watch_later_outlined;
-    }
-  }
-
   String _formatTime() {
-    final dt = message.timestamp.toDate();
+    final dt = widget.message.timestamp.toDate();
     final h = dt.hour.toString().padLeft(2, '0');
     final m = dt.minute.toString().padLeft(2, '0');
     return '$h:$m';
+  }
+}
+
+class _BubbleAvatar extends ConsumerWidget {
+  final String senderId;
+  const _BubbleAvatar({required this.senderId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(userDocProvider(senderId));
+    return user.when(
+      data: (u) => CircleAvatar(
+        radius: 14,
+        backgroundColor: const Color(0xFF1A1A1A),
+        backgroundImage: u?.profileImageUrl != null
+            ? NetworkImage(u!.profileImageUrl!)
+            : null,
+        child: u?.profileImageUrl == null
+            ? const Icon(Icons.person, size: 14, color: Colors.white54)
+            : null,
+      ),
+      loading: () =>
+          const CircleAvatar(radius: 14, backgroundColor: Color(0xFF151515)),
+      error: (_, __) =>
+          const CircleAvatar(radius: 14, backgroundColor: Color(0xFF1A1A1A)),
+    );
+  }
+}
+
+class _StatusIcon extends StatelessWidget {
+  final int status;
+  final bool isPending;
+  const _StatusIcon({required this.status, required this.isPending});
+
+  @override
+  Widget build(BuildContext context) {
+    if (isPending)
+      return const Icon(
+        Icons.watch_later_outlined,
+        size: 11,
+        color: Color(0xFF9A9A9A),
+      );
+
+    final color = status == 3
+        ? const Color(0xFFC74B6C)
+        : const Color(0xFF9A9A9A);
+    final icon = status >= 2 ? Icons.done_all_rounded : Icons.done_rounded;
+
+    return Icon(icon, size: 11, color: color);
   }
 }

@@ -88,17 +88,6 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
       backgroundColor: AppColors.background,
       body: Stack(
         children: [
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [AppColors.bgTop, AppColors.bgBottom],
-                ),
-              ),
-            ),
-          ),
           Positioned(
             top: 12,
             left: 12,
@@ -109,29 +98,14 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [AppColors.cardTop, AppColors.cardBottom],
-                    ),
+                    color: AppColors.card,
                     shape: BoxShape.circle,
-                    border: Border.all(
-                      color: AppColors.outline.withOpacity(0.9),
-                      width: 1,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.35),
-                        blurRadius: 18,
-                        spreadRadius: -10,
-                        offset: const Offset(0, 14),
-                      ),
-                    ],
+                    border: Border.all(color: AppColors.outline, width: 1),
                   ),
                   child: const Icon(
                     Icons.arrow_back,
                     color: AppColors.iconMuted,
-                    size: 20,
+                    size: 18,
                   ),
                 ),
               ),
@@ -267,23 +241,10 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
         duration: const Duration(milliseconds: 130),
         curve: Curves.easeOutCubic,
         child: Container(
-          height: 52,
+          height: 44,
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.45),
-                blurRadius: 26,
-                spreadRadius: -16,
-                offset: const Offset(0, 18),
-              ),
-              BoxShadow(
-                color: Colors.white.withOpacity(0.06),
-                blurRadius: 1,
-                offset: const Offset(0, 1),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(22),
           ),
           alignment: Alignment.center,
           child: widget.loading
@@ -292,17 +253,16 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
                   width: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Color(0xFF121417),
+                    color: Colors.black,
                   ),
                 )
               : Text(
                   widget.label,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF121417),
-                    letterSpacing: 0.2,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black,
                   ),
                 ),
         ),

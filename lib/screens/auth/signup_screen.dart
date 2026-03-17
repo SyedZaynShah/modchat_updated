@@ -90,24 +90,13 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
       backgroundColor: AppColors.background,
       body: Stack(
         children: [
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [AppColors.bgTop, AppColors.bgBottom],
-                ),
-              ),
-            ),
-          ),
           AnimatedOpacity(
             opacity: _anim ? 1 : 0,
             duration: const Duration(milliseconds: 280),
             child: Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
+                  horizontal: 16,
                   vertical: 24,
                 ),
                 child: ConstrainedBox(
@@ -115,24 +104,6 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      AnimatedScale(
-                        scale: _anim ? 1 : 0.95,
-                        duration: const Duration(milliseconds: 280),
-                        curve: Curves.easeOutCubic,
-                        child: Container(
-                          width: 360,
-                          height: 360,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: RadialGradient(
-                              colors: [
-                                AppColors.navy.withOpacity(0.10),
-                                AppColors.background.withOpacity(0.0),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
                       AnimatedSlide(
                         offset: _anim ? Offset.zero : const Offset(0, 0.05),
                         duration: const Duration(milliseconds: 280),
@@ -146,7 +117,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                               Text(
                                 "Let’s get started",
                                 style: const TextStyle(
-                                  fontSize: 26,
+                                  fontSize: 22,
                                   fontWeight: FontWeight.w600,
                                   color: AppColors.highlight,
                                   height: 1.1,
@@ -156,10 +127,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                               Text(
                                 'Create your account to continue.',
                                 style: TextStyle(
-                                  fontSize: 13.5,
-                                  color: AppColors.textSecondary.withOpacity(
-                                    0.92,
-                                  ),
+                                  fontSize: 14,
+                                  color: AppColors.textSecondary,
                                   height: 1.35,
                                 ),
                               ),
@@ -170,7 +139,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                 prefixIcon: Icons.person_outline,
                                 textInputAction: TextInputAction.next,
                               ),
-                              const SizedBox(height: 14),
+                              const SizedBox(height: 12),
                               CustomField(
                                 controller: _email,
                                 label: 'Email',
@@ -179,7 +148,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                 keyboardType: TextInputType.emailAddress,
                                 textInputAction: TextInputAction.next,
                               ),
-                              const SizedBox(height: 14),
+                              const SizedBox(height: 12),
                               CustomField(
                                 controller: _password,
                                 label: 'Password',
@@ -188,7 +157,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                 prefixIcon: Icons.lock_outline,
                                 textInputAction: TextInputAction.next,
                               ),
-                              const SizedBox(height: 14),
+                              const SizedBox(height: 12),
                               CustomField(
                                 controller: _confirm,
                                 label: 'Confirm Password',
@@ -220,7 +189,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                   Expanded(
                                     child: Divider(
                                       height: 1,
-                                      color: AppColors.outline.withOpacity(0.7),
+                                      color: AppColors.outline,
                                     ),
                                   ),
                                   Padding(
@@ -230,8 +199,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                     child: Text(
                                       'or continue with',
                                       style: TextStyle(
-                                        color: AppColors.textSecondary
-                                            .withOpacity(0.86),
+                                        color: AppColors.textSecondary,
                                         fontSize: 12.5,
                                       ),
                                     ),
@@ -239,7 +207,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                   Expanded(
                                     child: Divider(
                                       height: 1,
-                                      color: AppColors.outline.withOpacity(0.7),
+                                      color: AppColors.outline,
                                     ),
                                   ),
                                 ],
@@ -306,13 +274,10 @@ class _GoogleButtonState extends State<_GoogleButton> {
         duration: const Duration(milliseconds: 130),
         curve: Curves.easeOutCubic,
         child: Container(
-          height: 52,
+          height: 44,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(
-              color: AppColors.outline.withOpacity(0.9),
-              width: 1,
-            ),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: AppColors.outlineStrong, width: 1),
             color: Colors.transparent,
           ),
           alignment: Alignment.center,
@@ -340,8 +305,8 @@ class _GoogleButtonState extends State<_GoogleButton> {
               Text(
                 'Continue with Google',
                 style: TextStyle(
-                  color: AppColors.highlight.withOpacity(0.95),
-                  fontWeight: FontWeight.w600,
+                  color: AppColors.highlight,
+                  fontWeight: FontWeight.w500,
                   fontSize: 14,
                 ),
               ),
@@ -385,23 +350,10 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
         duration: const Duration(milliseconds: 130),
         curve: Curves.easeOutCubic,
         child: Container(
-          height: 52,
+          height: 44,
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.45),
-                blurRadius: 26,
-                spreadRadius: -16,
-                offset: const Offset(0, 18),
-              ),
-              BoxShadow(
-                color: Colors.white.withOpacity(0.06),
-                blurRadius: 1,
-                offset: const Offset(0, 1),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(22),
           ),
           alignment: Alignment.center,
           child: widget.loading
@@ -410,27 +362,22 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
                   width: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Color(0xFF121417),
+                    color: Colors.black,
                   ),
                 )
               : Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (widget.icon != null) ...[
-                      Icon(
-                        widget.icon,
-                        size: 18,
-                        color: const Color(0xFF121417),
-                      ),
+                      Icon(widget.icon, size: 18, color: Colors.black),
                       const SizedBox(width: 8),
                     ],
                     Text(
                       widget.label,
                       style: const TextStyle(
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF121417),
-                        letterSpacing: 0.2,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
                       ),
                     ),
                   ],

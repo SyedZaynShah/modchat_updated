@@ -167,18 +167,14 @@ class _WaveNavBarState extends State<WaveNavBar>
                               decoration: BoxDecoration(
                                 color: AppColors.burgundy,
                                 borderRadius: BorderRadius.circular(99),
-                                boxShadow: const [
+                                boxShadow: [
                                   BoxShadow(
-                                    color: AppColors.burgundySoftGlow,
-                                    blurRadius: 26,
-                                    spreadRadius: -16,
-                                    offset: Offset(0, 14),
-                                  ),
-                                  BoxShadow(
-                                    color: AppColors.burgundyFaintGlow,
-                                    blurRadius: 36,
-                                    spreadRadius: -26,
-                                    offset: Offset(0, 22),
+                                    color: AppColors.burgundy.withValues(
+                                      alpha: 0.18,
+                                    ),
+                                    blurRadius: 18,
+                                    spreadRadius: -14,
+                                    offset: const Offset(0, 14),
                                   ),
                                 ],
                               ),
