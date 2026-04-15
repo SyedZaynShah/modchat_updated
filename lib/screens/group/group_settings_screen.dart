@@ -1,6 +1,4 @@
-import 'dart:math';
-
-import 'package:cloud_firestore/cloud_firestore.dart';
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -29,11 +27,147 @@ class GroupSettingsScreen extends ConsumerStatefulWidget {
       _GroupSettingsScreenState();
 }
 
+class _JoinRequestsSection extends ConsumerWidget {
+  final String chatId;
+  const _JoinRequestsSection({required this.chatId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final chatRef = FirestoreService().dmChats.doc(chatId);
+    final requestsStream = chatRef
+        .collection('pendingMembers')
+        .orderBy('requestedAt', descending: true)
+        .snapshots();
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: requestsStream,
+      builder: (context, snap) {
+        final docs = snap.data?.docs ?? const [];
+        if (docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        Future<void> approve(String uid) async {
+          final messenger = ScaffoldMessenger.of(context);
+          try {
+            await FirebaseFirestore.instance.runTransaction((tx) async {
+              tx.update(chatRef, {
+                'members': FieldValue.arrayUnion([uid]),
+                'memberCount': FieldValue.increment(1),
+              });
+              tx.set(chatRef.collection('members').doc(uid), {
+                'userId': uid,
+                'role': 'member',
+                'joinedAt': FieldValue.serverTimestamp(),
+                'muteUntil': null,
+                'lastSentAt': null,
+                'isBanned': false,
+              });
+              tx.delete(chatRef.collection('pendingMembers').doc(uid));
+            });
+          } catch (e) {
+            messenger.showSnackBar(
+              SnackBar(content: Text('Approve failed: $e')),
+            );
+          }
+        }
+
+        Future<void> reject(String uid) async {
+          final messenger = ScaffoldMessenger.of(context);
+          try {
+            await chatRef.collection('pendingMembers').doc(uid).delete();
+          } catch (e) {
+            messenger.showSnackBar(
+              SnackBar(content: Text('Reject failed: $e')),
+            );
+          }
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SectionHeader(title: 'Join Requests', action: '${docs.length}'),
+            const SizedBox(height: 10),
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: docs.length,
+              itemBuilder: (context, index) {
+                final d = docs[index];
+                final uid = (d.data()['userId'] as String?) ?? d.id;
+
+                return Container(
+                  height: 64,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? Theme.of(context).colorScheme.surface
+                        : const Color(0xFF0F0F0F),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(context).brightness == Brightness.light
+                          ? Colors.black.withOpacity(0.05)
+                          : const Color(0xFF1A1A1A),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          uid,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Theme.of(context).brightness ==
+                                    Brightness.light
+                                ? Theme.of(context).colorScheme.onSurface
+                                : Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => reject(uid),
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFFE24C4C),
+                        ),
+                        child: const Text('Reject'),
+                      ),
+                      const SizedBox(width: 6),
+                      TextButton(
+                        onPressed: () => approve(uid),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Theme.of(context).brightness ==
+                                  Brightness.light
+                              ? Theme.of(context).colorScheme.primary
+                              : Colors.white,
+                        ),
+                        child: const Text('Approve'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
   final _nameCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _memberSearchCtrl = TextEditingController();
   bool _rotatingInvite = false;
+  bool? _slowModeEnabledOverride;
+  int? _slowModeDurationOverride;
+  final Set<String> _optimisticallyRemovedMemberIds = <String>{};
+  final Set<String> _removingMemberIds = <String>{};
 
   Map<String, bool> _permissionsFrom(Map<String, dynamic> groupData) {
     final settings = Map<String, dynamic>.from(
@@ -178,16 +312,6 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
     super.dispose();
   }
 
-  String _randomToken(int length) {
-    const chars =
-        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    final rand = Random.secure();
-    return List.generate(
-      length,
-      (_) => chars[rand.nextInt(chars.length)],
-    ).join();
-  }
-
   Future<void> _editTextField({
     required String title,
     required TextEditingController controller,
@@ -251,6 +375,69 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
     }
   }
 
+  Future<void> _revokeInvite({required Map<String, dynamic> groupData}) async {
+    setState(() => _rotatingInvite = true);
+    try {
+      final role = await _myRole();
+      final perms = _permissionsFrom(groupData);
+      final canInvite = role == 'owner' || role == 'admin'
+          ? true
+          : (perms['membersCanInvite'] == true);
+      if (!canInvite) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You do not have permission to manage invites'),
+          ),
+        );
+        return;
+      }
+
+      await ref
+          .read(groupModerationServiceProvider)
+          .revokeInvite(chatId: widget.chatId);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Invite update failed: $e')));
+    } finally {
+      if (mounted) setState(() => _rotatingInvite = false);
+    }
+  }
+
+  Future<void> _setSlowMode({
+    required bool enabled,
+    required int durationSec,
+  }) async {
+    final prevEnabled = _slowModeEnabledOverride;
+    final prevDuration = _slowModeDurationOverride;
+
+    setState(() {
+      _slowModeEnabledOverride = enabled;
+      _slowModeDurationOverride = enabled ? durationSec : 0;
+    });
+
+    // Fire-and-forget: UI is already updated optimistically.
+    ref
+        .read(groupModerationServiceProvider)
+        .setSlowMode(
+          chatId: widget.chatId,
+          enabled: enabled,
+          durationSec: durationSec,
+        )
+        .catchError((e) {
+          if (!mounted) return;
+          setState(() {
+            _slowModeEnabledOverride = prevEnabled;
+            _slowModeDurationOverride = prevDuration;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Slow mode update failed: $e')),
+          );
+        });
+  }
+
   Future<ImageProvider?> _resolveGroupAvatar(String? url) async {
     final raw = (url ?? '').trim();
     if (raw.isEmpty) return null;
@@ -280,7 +467,6 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
   Future<void> _rotateInvite({required Map<String, dynamic> groupData}) async {
     setState(() => _rotatingInvite = true);
     try {
-      final uid = FirebaseAuth.instance.currentUser!.uid;
       final role = await _myRole();
       final perms = _permissionsFrom(groupData);
       final canInvite = role == 'owner' || role == 'admin'
@@ -296,16 +482,9 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
         return;
       }
 
-      final token = _randomToken(12);
-      await FirestoreService().dmChats.doc(widget.chatId).set({
-        'invite': {
-          'token': token,
-          'createdAt': FieldValue.serverTimestamp(),
-          'revokedBy': uid,
-          'expiresAt': null,
-          'memberLimit': null,
-        },
-      }, SetOptions(merge: true));
+      await ref
+          .read(groupModerationServiceProvider)
+          .generateNewInvite(chatId: widget.chatId);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -538,7 +717,9 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
     try {
       final chatRef = FirestoreService().dmChats.doc(widget.chatId);
       final requireApproval = perms['adminsCanApproveMembers'] == true;
-      if (requireApproval) {
+      final isAdmin = myRole == 'owner' || myRole == 'admin';
+
+      if (requireApproval && !isAdmin) {
         final batch = FirebaseFirestore.instance.batch();
         for (final uid in selected) {
           batch.set(chatRef.collection('pendingMembers').doc(uid), {
@@ -567,6 +748,8 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
               'lastSentAt': null,
               'isBanned': false,
             });
+
+            tx.delete(chatRef.collection('pendingMembers').doc(uid));
           }
         });
       }
@@ -600,6 +783,8 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: fs.dmChats.doc(widget.chatId).snapshots(),
       builder: (context, snap) {
+        final theme = Theme.of(context);
+        final isLight = theme.brightness == Brightness.light;
         final data = snap.data?.data() ?? const <String, dynamic>{};
         final name = ((data['name'] as String?) ?? 'Group').trim();
         final description = ((data['description'] as String?) ?? '').trim();
@@ -610,14 +795,15 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
         final invite = Map<String, dynamic>.from(
           (data['invite'] as Map?) ?? const {},
         );
-        final token = (invite['token'] as String?)?.trim();
+        final code = (invite['code'] as String?)?.trim();
+        final revoked = (invite['revoked'] as bool?) ?? false;
 
         if (_nameCtrl.text.isEmpty) _nameCtrl.text = name;
         if (_descCtrl.text.isEmpty) _descCtrl.text = description;
 
-        final inviteLink = token == null || token.isEmpty
+        final inviteLink = (code == null || code.isEmpty || revoked)
             ? null
-            : 'https://appchat.com/invite/$token';
+            : 'https://yourapp.com/join/$code';
 
         Future<void> handleMenu(String v) async {
           if (v == 'edit_name') {
@@ -643,26 +829,38 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
           }
         }
 
+        final visibleMembers = members
+            .where((id) => !_optimisticallyRemovedMemberIds.contains(id))
+            .toList(growable: false);
+
         return Scaffold(
-          backgroundColor: const Color(0xFF000000),
+          backgroundColor: isLight
+              ? theme.colorScheme.background
+              : theme.scaffoldBackgroundColor,
           appBar: PreferredSize(
             preferredSize: const Size.fromHeight(52),
             child: AppBar(
               toolbarHeight: 52,
-              backgroundColor: const Color(0xFF000000),
+              backgroundColor: isLight
+                  ? theme.colorScheme.background
+                  : theme.scaffoldBackgroundColor,
               elevation: 0,
               centerTitle: true,
-              title: const Text(
+              title: Text(
                 'Group Info',
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white,
+                  color: isLight
+                      ? theme.colorScheme.onBackground
+                      : Colors.white,
                 ),
               ),
-              iconTheme: const IconThemeData(
+              iconTheme: IconThemeData(
                 size: 20,
-                color: Color(0xFFA0A0A0),
+                color: isLight
+                    ? theme.colorScheme.onBackground
+                    : const Color(0xFFA0A0A0),
               ),
               actions: [
                 IconButton(
@@ -708,7 +906,12 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
                       ),
                     ],
                     onSelected: (v) async => handleMenu(v),
-                    child: const Icon(Icons.more_vert_rounded),
+                    child: Icon(
+                      Icons.more_vert_rounded,
+                      color: isLight
+                          ? theme.colorScheme.onBackground
+                          : const Color(0xFFA0A0A0),
+                    ),
                   ),
                 ),
               ],
@@ -719,12 +922,43 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
             builder: (context, roleSnap) {
               final role = roleSnap.data;
               final perms = _permissionsFrom(data);
+              final isAdmin = role == 'owner' || role == 'admin';
+              final isOwner = role == 'owner';
               final canEditInfo = role == 'owner' || role == 'admin'
                   ? true
                   : (perms['membersCanEditSettings'] == true);
               final canAddMembers = role == 'owner' || role == 'admin'
                   ? true
                   : (perms['membersCanAddMembers'] == true);
+
+              final moderation = Map<String, dynamic>.from(
+                (data['moderation'] as Map?) ?? const {},
+              );
+              final remoteSlowEnabled =
+                  (moderation['slowModeEnabled'] as bool?) ?? false;
+              final remoteSlowDuration =
+                  (moderation['slowModeDurationSec'] as int?) ?? 0;
+
+              final slowModeEnabled =
+                  _slowModeEnabledOverride ?? remoteSlowEnabled;
+              final slowModeDurationSec =
+                  _slowModeDurationOverride ?? remoteSlowDuration;
+
+              if (_slowModeEnabledOverride != null &&
+                  _slowModeEnabledOverride == remoteSlowEnabled &&
+                  (_slowModeDurationOverride ?? 0) == remoteSlowDuration) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  if (_slowModeEnabledOverride == null &&
+                      _slowModeDurationOverride == null) {
+                    return;
+                  }
+                  setState(() {
+                    _slowModeEnabledOverride = null;
+                    _slowModeDurationOverride = null;
+                  });
+                });
+              }
 
               return CustomScrollView(
                 slivers: [
@@ -768,9 +1002,11 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
                           const SizedBox(height: 10),
                           Text(
                             '${members.length} members',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
-                              color: Color(0xFF8A8A8A),
+                              color: isLight
+                                  ? theme.colorScheme.primary
+                                  : const Color(0xFF8A8A8A),
                             ),
                           ),
                           const SizedBox(height: 16),
@@ -866,12 +1102,241 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
                           const SizedBox(height: 18),
                           _MembersSection(
                             chatId: widget.chatId,
-                            memberIds: members,
-                            canManage: role == 'owner' || role == 'admin',
+                            memberIds: visibleMembers,
+                            canManage: isAdmin,
+                            myRole: role,
                             onAdd: canAddMembers
                                 ? () => _openAddPeople(members)
                                 : null,
                             controller: _memberSearchCtrl,
+                            onOptimisticRemove: (targetUid) {
+                              if (_optimisticallyRemovedMemberIds.contains(
+                                targetUid,
+                              )) {
+                                return;
+                              }
+                              setState(() {
+                                _removingMemberIds.add(targetUid);
+                              });
+
+                              Future.delayed(
+                                const Duration(milliseconds: 220),
+                                () {
+                                  if (!mounted) return;
+                                  setState(() {
+                                    _removingMemberIds.remove(targetUid);
+                                    _optimisticallyRemovedMemberIds.add(
+                                      targetUid,
+                                    );
+                                  });
+                                },
+                              );
+                            },
+                            onOptimisticRemoveRollback: (targetUid) {
+                              if (!mounted) return;
+                              setState(() {
+                                _removingMemberIds.remove(targetUid);
+                                _optimisticallyRemovedMemberIds.remove(
+                                  targetUid,
+                                );
+                              });
+                            },
+                            isRemoving: (uid) =>
+                                _removingMemberIds.contains(uid),
+                          ),
+                          if ((perms['adminsCanApproveMembers'] == true) &&
+                              isAdmin) ...[
+                            const SizedBox(height: 18),
+                            _JoinRequestsSection(chatId: widget.chatId),
+                          ],
+                          const SizedBox(height: 18),
+                          const _SectionHeader(title: 'Moderation'),
+                          const SizedBox(height: 10),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            margin: const EdgeInsets.symmetric(
+                              vertical: 6,
+                              horizontal: 12,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isLight
+                                  ? theme.colorScheme.surface
+                                  : const Color(0xFF111111),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: isLight
+                                    ? Colors.black.withOpacity(0.05)
+                                    : const Color(0xFF222222),
+                                width: 1,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        'Slow Mode',
+                                        style: TextStyle(
+                                          color: isLight
+                                              ? theme.colorScheme.onSurface
+                                              : Colors.white,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    Switch(
+                                      value: slowModeEnabled,
+                                      activeColor: theme.colorScheme.primary,
+                                      onChanged: !isAdmin
+                                          ? null
+                                          : (v) {
+                                              final nextDur =
+                                                  slowModeDurationSec <= 0
+                                                  ? 10
+                                                  : slowModeDurationSec;
+                                              _setSlowMode(
+                                                enabled: v,
+                                                durationSec: nextDur,
+                                              );
+                                            },
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    _SlowModeChip(
+                                      label: '5s',
+                                      selected:
+                                          slowModeEnabled &&
+                                          slowModeDurationSec == 5,
+                                      enabled: isAdmin && slowModeEnabled,
+                                      onTap: () => _setSlowMode(
+                                        enabled: true,
+                                        durationSec: 5,
+                                      ),
+                                    ),
+                                    _SlowModeChip(
+                                      label: '10s',
+                                      selected:
+                                          slowModeEnabled &&
+                                          slowModeDurationSec == 10,
+                                      enabled: isAdmin && slowModeEnabled,
+                                      onTap: () => _setSlowMode(
+                                        enabled: true,
+                                        durationSec: 10,
+                                      ),
+                                    ),
+                                    _SlowModeChip(
+                                      label: '30s',
+                                      selected:
+                                          slowModeEnabled &&
+                                          slowModeDurationSec == 30,
+                                      enabled: isAdmin && slowModeEnabled,
+                                      onTap: () => _setSlowMode(
+                                        enabled: true,
+                                        durationSec: 30,
+                                      ),
+                                    ),
+                                    _SlowModeChip(
+                                      label: '1m',
+                                      selected:
+                                          slowModeEnabled &&
+                                          slowModeDurationSec == 60,
+                                      enabled: isAdmin && slowModeEnabled,
+                                      onTap: () => _setSlowMode(
+                                        enabled: true,
+                                        durationSec: 60,
+                                      ),
+                                    ),
+                                    _SlowModeChip(
+                                      label: '5m',
+                                      selected:
+                                          slowModeEnabled &&
+                                          slowModeDurationSec == 300,
+                                      enabled: isAdmin && slowModeEnabled,
+                                      onTap: () => _setSlowMode(
+                                        enabled: true,
+                                        durationSec: 300,
+                                      ),
+                                    ),
+                                    _SlowModeChip(
+                                      label: '15m',
+                                      selected:
+                                          slowModeEnabled &&
+                                          slowModeDurationSec == 900,
+                                      enabled: isAdmin && slowModeEnabled,
+                                      onTap: () => _setSlowMode(
+                                        enabled: true,
+                                        durationSec: 900,
+                                      ),
+                                    ),
+                                    _SlowModeChip(
+                                      label: 'Custom',
+                                      selected: false,
+                                      enabled: isAdmin && slowModeEnabled,
+                                      onTap: () async {
+                                        final ctrl = TextEditingController();
+                                        final raw = await showDialog<String>(
+                                          context: context,
+                                          builder: (ctx) => AlertDialog(
+                                            title: const Text(
+                                              'Custom slow mode (seconds)',
+                                            ),
+                                            content: TextField(
+                                              controller: ctrl,
+                                              keyboardType:
+                                                  TextInputType.number,
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(ctx),
+                                                child: const Text('Cancel'),
+                                              ),
+                                              TextButton(
+                                                onPressed: () => Navigator.pop(
+                                                  ctx,
+                                                  ctrl.text.trim(),
+                                                ),
+                                                child: const Text('Set'),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                        if (raw == null) return;
+                                        final sec = int.tryParse(raw) ?? 0;
+                                        if (sec <= 0) return;
+                                        _setSlowMode(
+                                          enabled: true,
+                                          durationSec: sec,
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ),
+                                if (!isAdmin)
+                                  Padding(
+                                    padding: EdgeInsets.only(top: 10),
+                                    child: Text(
+                                      'Only admins can change moderation settings',
+                                      style: TextStyle(
+                                        color: isLight
+                                            ? theme.colorScheme.onSurface
+                                                  .withOpacity(0.6)
+                                            : const Color(0xFF8A8A8A),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
                           const SizedBox(height: 18),
                           const _SectionHeader(title: 'Group Settings'),
@@ -903,13 +1368,17 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
                           _SettingsTile(
                             icon: Icons.admin_panel_settings_outlined,
                             title: 'Manage admins',
-                            onTap: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Manage admins coming soon'),
-                                ),
-                              );
-                            },
+                            onTap: !isOwner
+                                ? null
+                                : () {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Manage admins from member list',
+                                        ),
+                                      ),
+                                    );
+                                  },
                           ),
                           _SettingsTile(
                             icon: Icons.link,
@@ -942,6 +1411,7 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
                                     inviteLink: inviteLink,
                                   ),
                             onRotate: () => _rotateInvite(groupData: data),
+                            onRevoke: () => _revokeInvite(groupData: data),
                           ),
                           const SizedBox(height: 22),
                           const _SectionHeader(title: 'Danger Zone'),
@@ -953,7 +1423,7 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
                           const SizedBox(height: 10),
                           _DangerButton(
                             text: 'Delete group',
-                            onTap: () => _deleteGroup(),
+                            onTap: isOwner ? () => _deleteGroup() : null,
                           ),
                           const SizedBox(height: 28),
                         ],
@@ -978,15 +1448,19 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Row(
       children: [
         Expanded(
           child: Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
+              color: isLight
+                  ? theme.colorScheme.onBackground
+                  : Colors.white,
             ),
           ),
         ),
@@ -998,9 +1472,9 @@ class _SectionHeader extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               child: Text(
                 action!,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
-                  color: Color(0xFFC74B6C),
+                  color: theme.colorScheme.primary,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -1017,17 +1491,30 @@ class _EmptyCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF101010),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+        color: isLight ? theme.colorScheme.surface : const Color(0xFF101010),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isLight
+              ? Colors.black.withOpacity(0.05)
+              : const Color(0xFF1A1A1A),
+          width: 1,
+        ),
       ),
       child: Text(
         text,
-        style: const TextStyle(fontSize: 12, color: Color(0xFFA5A5A5)),
+        style: TextStyle(
+          fontSize: 12,
+          color: isLight
+              ? theme.colorScheme.onSurface.withOpacity(0.6)
+              : const Color(0xFFA5A5A5),
+        ),
       ),
     );
   }
@@ -1053,12 +1540,14 @@ class _GroupAvatar84 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Container(
       width: 84,
       height: 84,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: const Color(0xFF141414),
+        color: isLight ? theme.colorScheme.surface : const Color(0xFF141414),
         image: image == null
             ? null
             : DecorationImage(image: image!, fit: BoxFit.cover),
@@ -1068,10 +1557,12 @@ class _GroupAvatar84 extends StatelessWidget {
           ? null
           : Text(
               _initials(name),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w700,
-                color: Colors.white,
+                color: isLight
+                    ? theme.colorScheme.onSurface
+                    : Colors.white,
               ),
             ),
     );
@@ -1090,6 +1581,8 @@ class _EditableTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return InkWell(
       onTap: enabled ? onEdit : null,
       borderRadius: BorderRadius.circular(10),
@@ -1103,16 +1596,24 @@ class _EditableTitle extends StatelessWidget {
                 text,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white,
+                  color: isLight
+                      ? theme.colorScheme.onBackground
+                      : Colors.white,
                 ),
               ),
             ),
             if (enabled) ...[
               const SizedBox(width: 8),
-              const Icon(Icons.edit, size: 16, color: Color(0xFFA0A0A0)),
+              Icon(
+                Icons.edit,
+                size: 16,
+                color: isLight
+                    ? theme.colorScheme.onSurface.withOpacity(0.7)
+                    : const Color(0xFFA0A0A0),
+              ),
             ],
           ],
         ),
@@ -1135,6 +1636,8 @@ class _EditableDescription extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return InkWell(
       onTap: enabled ? onEdit : null,
       borderRadius: BorderRadius.circular(10),
@@ -1151,19 +1654,23 @@ class _EditableDescription extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 13,
-                  color: isPlaceholder
-                      ? const Color(0xFF6F6F6F)
-                      : const Color(0xFFA5A5A5),
+                  color: isLight
+                      ? theme.colorScheme.onBackground.withOpacity(0.6)
+                      : (isPlaceholder
+                            ? const Color(0xFF6F6F6F)
+                            : const Color(0xFFA5A5A5)),
                   height: 1.25,
                 ),
               ),
             ),
             if (enabled) ...[
               const SizedBox(width: 8),
-              const Icon(
+              Icon(
                 Icons.edit_outlined,
                 size: 16,
-                color: Color(0xFFA0A0A0),
+                color: isLight
+                    ? theme.colorScheme.onSurface.withOpacity(0.7)
+                    : const Color(0xFFA0A0A0),
               ),
             ],
           ],
@@ -1187,13 +1694,20 @@ class _QuickActionsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Container(
       padding: const EdgeInsets.all(10),
       margin: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: const Color(0xFF111111),
+        color: isLight ? theme.colorScheme.surface : const Color(0xFF111111),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+        border: Border.all(
+          color: isLight
+              ? Colors.black.withOpacity(0.05)
+              : const Color(0xFF1A1A1A),
+          width: 1,
+        ),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -1236,6 +1750,8 @@ class _QuickActionItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
@@ -1244,13 +1760,24 @@ class _QuickActionItem extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 20, color: const Color(0xFFA0A0A0)),
+            Icon(
+              icon,
+              size: 20,
+              color: isLight
+                  ? theme.colorScheme.onSurface.withOpacity(0.7)
+                  : const Color(0xFFA0A0A0),
+            ),
             const SizedBox(height: 6),
             Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: Color(0xFFA5A5A5)),
+              style: TextStyle(
+                fontSize: 11,
+                color: isLight
+                    ? theme.colorScheme.onSurface.withOpacity(0.6)
+                    : const Color(0xFFA5A5A5),
+              ),
             ),
           ],
         ),
@@ -1348,10 +1875,12 @@ class _MediaTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final theme = Theme.of(context);
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: Container(
-        color: const Color(0xFF151515),
+        color: isLight ? theme.colorScheme.surface : const Color(0xFF151515),
         child: FutureBuilder<String?>(
           future: _resolve(message.mediaUrl),
           builder: (context, snap) {
@@ -1362,13 +1891,17 @@ class _MediaTile extends StatelessWidget {
             Widget base;
             if (url == null || isDoc) {
               base = Container(
-                color: const Color(0xFF101010),
+                color: isLight
+                    ? theme.colorScheme.surface
+                    : const Color(0xFF101010),
                 alignment: Alignment.center,
                 child: Icon(
                   isDoc
                       ? Icons.insert_drive_file_outlined
                       : Icons.image_outlined,
-                  color: const Color(0xFFA0A0A0),
+                  color: isLight
+                      ? theme.colorScheme.onSurface.withOpacity(0.7)
+                      : const Color(0xFFA0A0A0),
                   size: 22,
                 ),
               );
@@ -1377,14 +1910,22 @@ class _MediaTile extends StatelessWidget {
                 imageUrl: url,
                 fit: BoxFit.cover,
                 placeholder: (context, _) =>
-                    Container(color: const Color(0xFF151515)),
+                    Container(
+                      color: isLight
+                          ? theme.colorScheme.surface
+                          : const Color(0xFF151515),
+                    ),
                 errorWidget: (context, _, __) => Container(
-                  color: const Color(0xFF101010),
+                  color: isLight
+                      ? theme.colorScheme.surface
+                      : const Color(0xFF101010),
                   alignment: Alignment.center,
-                  child: const Icon(
+                  child: Icon(
                     Icons.broken_image_outlined,
                     size: 22,
-                    color: Color(0xFFA0A0A0),
+                    color: isLight
+                        ? theme.colorScheme.onSurface.withOpacity(0.7)
+                        : const Color(0xFFA0A0A0),
                   ),
                 ),
               );
@@ -1417,6 +1958,7 @@ class _SkeletonGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -1429,7 +1971,9 @@ class _SkeletonGrid extends StatelessWidget {
       itemBuilder: (context, index) {
         return ClipRRect(
           borderRadius: BorderRadius.circular(6),
-          child: Container(color: const Color(0xFF151515)),
+          child: Container(
+            color: isLight ? Colors.grey.shade200 : const Color(0xFF151515),
+          ),
         );
       },
     );
@@ -1440,14 +1984,22 @@ class _MembersSection extends ConsumerStatefulWidget {
   final String chatId;
   final List<String> memberIds;
   final bool canManage;
+  final String? myRole;
   final VoidCallback? onAdd;
   final TextEditingController controller;
+  final void Function(String targetUid)? onOptimisticRemove;
+  final void Function(String targetUid)? onOptimisticRemoveRollback;
+  final bool Function(String uid)? isRemoving;
   const _MembersSection({
     required this.chatId,
     required this.memberIds,
     required this.canManage,
+    required this.myRole,
     required this.onAdd,
     required this.controller,
+    required this.onOptimisticRemove,
+    required this.onOptimisticRemoveRollback,
+    this.isRemoving,
   });
 
   @override
@@ -1484,6 +2036,12 @@ class _MembersSectionState extends ConsumerState<_MembersSection> {
   Widget build(BuildContext context) {
     final q = widget.controller.text.trim().toLowerCase();
 
+    final fs = FirestoreService();
+    final membersStream = fs.dmChats
+        .doc(widget.chatId)
+        .collection('members')
+        .snapshots();
+
     final visible = <String>[];
     for (final id in widget.memberIds) {
       final u = ref
@@ -1493,50 +2051,95 @@ class _MembersSectionState extends ConsumerState<_MembersSection> {
       if (q.isEmpty || name.contains(q)) visible.add(id);
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _SectionHeader(
-          title: 'Members',
-          action: widget.onAdd == null ? null : 'Add',
-          onAction: widget.onAdd,
-        ),
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: const Color(0xFF101010),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
-          ),
-          child: TextField(
-            controller: widget.controller,
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-            decoration: const InputDecoration(
-              hintText: 'Search members',
-              hintStyle: TextStyle(color: Color(0xFF6F6F6F)),
-              border: InputBorder.none,
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: membersStream,
+      builder: (context, snap) {
+        final roleByUid = <String, String>{};
+        for (final d in snap.data?.docs ?? const []) {
+          final uid = d.id;
+          final role = (d.data()['role'] as String?) ?? '';
+          if (role.isNotEmpty) roleByUid[uid] = role;
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SectionHeader(
+              title: 'Members',
+              action: widget.onAdd == null ? null : 'Add',
+              onAction: widget.onAdd,
             ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        if (visible.isEmpty)
-          const _EmptyCard(text: 'No members found')
-        else
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: visible.length,
-            itemBuilder: (context, index) {
-              final id = visible[index];
-              return _MemberRow(
-                chatId: widget.chatId,
-                userId: id,
-                canManage: widget.canManage,
-              );
-            },
-          ),
-      ],
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).brightness == Brightness.light
+                    ? Theme.of(context).colorScheme.surface
+                    : const Color(0xFF101010),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: Theme.of(context).brightness == Brightness.light
+                      ? Colors.black.withOpacity(0.05)
+                      : const Color(0xFF1A1A1A),
+                  width: 1,
+                ),
+              ),
+              child: TextField(
+                controller: widget.controller,
+                style: TextStyle(
+                  color: Theme.of(context).brightness == Brightness.light
+                      ? Theme.of(context).colorScheme.onSurface
+                      : Colors.white,
+                  fontSize: 13,
+                ),
+                decoration: InputDecoration(
+                  filled: Theme.of(context).brightness == Brightness.light,
+                  fillColor: Theme.of(context).colorScheme.surface,
+                  hintText: 'Search members',
+                  hintStyle: TextStyle(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? Theme.of(context).colorScheme.onSurface.withOpacity(0.5)
+                        : const Color(0xFF6F6F6F),
+                  ),
+                  border: InputBorder.none,
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (visible.isEmpty)
+              const _EmptyCard(text: 'No members found')
+            else
+              ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: visible.length,
+                itemBuilder: (context, index) {
+                  final id = visible[index];
+                  return _MemberRow(
+                    key: ValueKey(id),
+                    chatId: widget.chatId,
+                    userId: id,
+                    canManage: widget.canManage,
+                    myRole: widget.myRole,
+                    role: roleByUid[id],
+                    onOptimisticRemove: widget.onOptimisticRemove,
+                    onOptimisticRemoveRollback:
+                        widget.onOptimisticRemoveRollback,
+                    isRemoving: widget.isRemoving?.call(id) ?? false,
+                  );
+                },
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1545,25 +2148,265 @@ class _MemberRow extends ConsumerWidget {
   final String chatId;
   final String userId;
   final bool canManage;
+  final String? myRole;
+  final String? role;
+  final void Function(String targetUid)? onOptimisticRemove;
+  final void Function(String targetUid)? onOptimisticRemoveRollback;
+  final bool isRemoving;
   const _MemberRow({
+    super.key,
     required this.chatId,
     required this.userId,
     required this.canManage,
+    required this.myRole,
+    required this.role,
+    required this.onOptimisticRemove,
+    required this.onOptimisticRemoveRollback,
+    required this.isRemoving,
   });
+
+  Future<void> _openMemberActionsSheet(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final me = FirebaseAuth.instance.currentUser?.uid;
+    if (me == null) return;
+    if (!canManage) return;
+    if (userId == me) return;
+
+    final fs = FirestoreService();
+    final myRoleSnap = await fs.dmChats
+        .doc(chatId)
+        .collection('members')
+        .doc(me)
+        .get();
+    final effectiveMyRole =
+        (myRoleSnap.data()?['role'] as String?) ?? (myRole ?? 'member');
+    final isOwner = effectiveMyRole == 'owner';
+    final isAdmin = effectiveMyRole == 'owner' || effectiveMyRole == 'admin';
+    if (!isAdmin) return;
+
+    final targetSnap = await fs.dmChats
+        .doc(chatId)
+        .collection('members')
+        .doc(userId)
+        .get();
+    final targetRole = (targetSnap.data()?['role'] as String?) ?? 'member';
+    final targetIsOwner = targetRole == 'owner';
+
+    if (!context.mounted) return;
+
+    Future<void> mute(Duration? duration) async {
+      final until = duration == null
+          ? null
+          : Timestamp.fromDate(DateTime.now().add(duration));
+      try {
+        await ref
+            .read(groupModerationServiceProvider)
+            .muteUser(chatId: chatId, targetUid: userId, until: until);
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Mute updated')));
+      } catch (e) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Action failed: $e')));
+      }
+    }
+
+    Future<void> remove() async {
+      onOptimisticRemove?.call(userId);
+      try {
+        ref
+            .read(groupModerationServiceProvider)
+            .removeMember(chatId: chatId, targetUid: userId)
+            .catchError((_) {
+              onOptimisticRemoveRollback?.call(userId);
+            });
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Member removed')));
+      } catch (e) {
+        onOptimisticRemoveRollback?.call(userId);
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Action failed: $e')));
+      }
+    }
+
+    Future<void> setAdmin(bool makeAdmin) async {
+      try {
+        await ref
+            .read(groupModerationServiceProvider)
+            .setAdmin(chatId: chatId, targetUid: userId, isAdmin: makeAdmin);
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Role updated')));
+      } catch (e) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Action failed: $e')));
+      }
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        final canEditAdmin = isOwner && !targetIsOwner;
+        final canRemove = !targetIsOwner;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(
+                  Icons.volume_off_outlined,
+                  color: Color(0xFFA0A0A0),
+                ),
+                title: Text(
+                  'Mute 10 min',
+                  style: TextStyle(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Colors.white,
+                  ),
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await mute(const Duration(minutes: 10));
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.volume_off_outlined,
+                  color: Color(0xFFA0A0A0),
+                ),
+                title: Text(
+                  'Mute 1 hour',
+                  style: TextStyle(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Colors.white,
+                  ),
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await mute(const Duration(hours: 1));
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.volume_off_outlined,
+                  color: Color(0xFFA0A0A0),
+                ),
+                title: Text(
+                  'Mute 24 hours',
+                  style: TextStyle(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Colors.white,
+                  ),
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await mute(const Duration(hours: 24));
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.volume_off_outlined,
+                  color: Color(0xFFA0A0A0),
+                ),
+                title: Text(
+                  'Mute until unmuted',
+                  style: TextStyle(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Colors.white,
+                  ),
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await mute(null);
+                },
+              ),
+              Divider(
+                color: Colors.black.withOpacity(0.05),
+                thickness: 0.5,
+                height: 10,
+              ),
+              if (canEditAdmin)
+                ListTile(
+                  leading: const Icon(
+                    Icons.admin_panel_settings_outlined,
+                    color: Color(0xFFA0A0A0),
+                  ),
+                  title: Text(
+                    targetRole == 'admin' ? 'Remove admin' : 'Make admin',
+                    style: TextStyle(
+                      color: Theme.of(context).brightness == Brightness.light
+                          ? Theme.of(context).colorScheme.onSurface
+                          : Colors.white,
+                    ),
+                  ),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await setAdmin(targetRole != 'admin');
+                  },
+                ),
+              if (canRemove)
+                ListTile(
+                  leading: const Icon(
+                    Icons.remove_circle_outline,
+                    color: Color(0xFFE24C4C),
+                  ),
+                  title: const Text(
+                    'Remove from group',
+                    style: TextStyle(color: Color(0xFFE24C4C)),
+                  ),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await remove();
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(userDocProvider(userId));
-    final fs = FirestoreService();
+    final effectiveRole = (role ?? '').toLowerCase();
 
-    return Container(
+    final content = Container(
       height: 64,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF101010),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+        color: Theme.of(context).brightness == Brightness.light
+            ? Theme.of(context).colorScheme.surface
+            : const Color(0xFF101010),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Theme.of(context).brightness == Brightness.light
+              ? Colors.black.withOpacity(0.05)
+              : const Color(0xFF1A1A1A),
+          width: 1,
+        ),
       ),
       child: Row(
         children: [
@@ -1576,14 +2419,20 @@ class _MemberRow extends ConsumerWidget {
                 children: [
                   CircleAvatar(
                     radius: 18,
-                    backgroundColor: const Color(0xFF141414),
+                    backgroundColor: Theme.of(context).brightness ==
+                            Brightness.light
+                        ? Theme.of(context).colorScheme.surface
+                        : const Color(0xFF141414),
                     child: pfp.isEmpty
                         ? Text(
                             name.characters.isNotEmpty
                                 ? name.characters.first.toUpperCase()
                                 : 'U',
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: Theme.of(context).brightness ==
+                                      Brightness.light
+                                  ? Theme.of(context).colorScheme.onSurface
+                                  : Colors.white,
                               fontWeight: FontWeight.w700,
                             ),
                           )
@@ -1625,10 +2474,12 @@ class _MemberRow extends ConsumerWidget {
                       display,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
-                        color: Colors.white,
+                        color: Theme.of(context).brightness == Brightness.light
+                            ? Theme.of(context).colorScheme.onSurface
+                            : Colors.white,
                       ),
                     );
                   },
@@ -1640,81 +2491,88 @@ class _MemberRow extends ConsumerWidget {
                   error: (_, __) => const SizedBox.shrink(),
                 ),
                 const SizedBox(height: 6),
-                StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                  stream: fs.dmChats
-                      .doc(chatId)
-                      .collection('members')
-                      .doc(userId)
-                      .snapshots(),
-                  builder: (context, snap) {
-                    final role = (snap.data?.data()?['role'] as String?) ?? '';
-                    if (role != 'admin' && role != 'owner') {
-                      return const SizedBox.shrink();
-                    }
-                    return _RoleBadge(role: role);
-                  },
-                ),
+                if (effectiveRole == 'admin' || effectiveRole == 'owner')
+                  _RoleBadge(role: effectiveRole),
               ],
             ),
           ),
           if (canManage)
             IconButton(
-              onPressed: () => showModalBottomSheet<void>(
-                context: context,
-                backgroundColor: const Color(0xFF0F0F0F),
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-                ),
-                builder: (ctx) {
-                  return SafeArea(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ListTile(
-                          leading: const Icon(
-                            Icons.person_outline,
-                            color: Color(0xFFA0A0A0),
-                          ),
-                          title: const Text(
-                            'View profile',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                          onTap: () => Navigator.pop(ctx),
-                        ),
-                        ListTile(
-                          leading: const Icon(
-                            Icons.admin_panel_settings_outlined,
-                            color: Color(0xFFA0A0A0),
-                          ),
-                          title: const Text(
-                            'Make admin',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                          onTap: () => Navigator.pop(ctx),
-                        ),
-                        ListTile(
-                          leading: const Icon(
-                            Icons.remove_circle_outline,
-                            color: Color(0xFFE24C4C),
-                          ),
-                          title: const Text(
-                            'Remove from group',
-                            style: TextStyle(color: Color(0xFFE24C4C)),
-                          ),
-                          onTap: () => Navigator.pop(ctx),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                    ),
-                  );
-                },
-              ),
-              icon: const Icon(
+              onPressed: () => _openMemberActionsSheet(context, ref),
+              icon: Icon(
                 Icons.more_vert_rounded,
-                color: Color(0xFFA0A0A0),
+                color: Theme.of(context).brightness == Brightness.light
+                    ? Theme.of(context).colorScheme.primary
+                    : const Color(0xFFA0A0A0),
               ),
             ),
         ],
+      ),
+    );
+
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 220),
+      opacity: isRemoving ? 0.0 : 1.0,
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeInOut,
+        alignment: Alignment.topCenter,
+        child: isRemoving ? const SizedBox(height: 0) : content,
+      ),
+    );
+  }
+}
+
+class _SlowModeChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+  const _SlowModeChip({
+    required this.label,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+      final isLight = Theme.of(context).brightness == Brightness.light;
+      final bg = selected
+      ? (isLight
+        ? Theme.of(context).colorScheme.primary.withOpacity(0.12)
+        : const Color(0xFF1E2A3A))
+      : (isLight
+        ? Theme.of(context).colorScheme.surface
+        : const Color(0xFF0F0F0F));
+      final border = selected
+      ? (isLight
+        ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
+        : const Color(0xFF2A4A7A))
+      : (isLight ? Colors.black.withOpacity(0.05) : const Color(0xFF222222));
+      final fg = enabled
+      ? (isLight
+        ? Theme.of(context).colorScheme.onSurface
+        : Colors.white)
+      : const Color(0xFF6F6F6F);
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(100),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(100),
+          border: Border.all(color: border, width: 1),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: fg,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
     );
   }
@@ -1727,18 +2585,30 @@ class _RoleBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isOwner = role == 'owner';
+    final isLight = Theme.of(context).brightness == Brightness.light;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       decoration: BoxDecoration(
-        color: isOwner ? const Color(0xFFC74B6C) : const Color(0xFF1E1E1E),
+        color: isOwner
+            ? Theme.of(context).colorScheme.primary
+            : (isLight
+                  ? Theme.of(context).colorScheme.surface
+                  : const Color(0xFF1E1E1E)),
         borderRadius: BorderRadius.circular(6),
+        border: isLight
+            ? Border.all(color: Colors.black.withOpacity(0.05))
+            : null,
       ),
       child: Text(
         isOwner ? 'OWNER' : 'ADMIN',
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 10,
           fontWeight: FontWeight.w700,
-          color: Colors.white,
+          color: isOwner
+              ? Colors.white
+              : (isLight
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Colors.white),
           height: 1.0,
         ),
       ),
@@ -1758,21 +2628,34 @@ class _SettingsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final theme = Theme.of(context);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
         height: 52,
-        margin: const EdgeInsets.only(bottom: 8),
+        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFF101010),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+          color: isLight ? theme.colorScheme.surface : const Color(0xFF101010),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isLight
+                ? Colors.black.withOpacity(0.05)
+                : const Color(0xFF1A1A1A),
+            width: 1,
+          ),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: const Color(0xFFA0A0A0)),
+            Icon(
+              icon,
+              size: 18,
+              color: isLight
+                  ? theme.colorScheme.onSurface.withOpacity(0.7)
+                  : const Color(0xFFA0A0A0),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -1780,11 +2663,21 @@ class _SettingsTile extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  color: onTap == null ? const Color(0xFF6F6F6F) : Colors.white,
+                  color: onTap == null
+                      ? const Color(0xFF6F6F6F)
+                      : (isLight
+                            ? theme.colorScheme.onSurface
+                            : Colors.white),
                 ),
               ),
             ),
-            const Icon(Icons.chevron_right, color: Color(0xFFA0A0A0), size: 20),
+            Icon(
+              Icons.chevron_right,
+              color: isLight
+                  ? theme.colorScheme.primary
+                  : const Color(0xFFA0A0A0),
+              size: 20,
+            ),
           ],
         ),
       ),
@@ -1798,22 +2691,32 @@ class _InviteLinkCard extends StatelessWidget {
   final VoidCallback? onShowQr;
   final VoidCallback? onCopy;
   final VoidCallback onRotate;
+  final VoidCallback onRevoke;
   const _InviteLinkCard({
     required this.inviteLink,
     required this.isBusy,
     required this.onShowQr,
     required this.onCopy,
     required this.onRotate,
+    required this.onRevoke,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF101010),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+        color: isLight ? theme.colorScheme.surface : const Color(0xFF101010),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isLight
+              ? Colors.black.withOpacity(0.05)
+              : const Color(0xFF1A1A1A),
+          width: 1,
+        ),
       ),
       child: Row(
         children: [
@@ -1821,12 +2724,12 @@ class _InviteLinkCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Invite Link',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                    color: isLight ? theme.colorScheme.onSurface : Colors.white,
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -1834,9 +2737,11 @@ class _InviteLinkCard extends StatelessWidget {
                   inviteLink ?? 'No invite link generated',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: Color(0xFFA5A5A5),
+                    color: isLight
+                        ? theme.colorScheme.onSurface.withOpacity(0.6)
+                        : const Color(0xFFA5A5A5),
                   ),
                 ),
               ],
@@ -1845,15 +2750,23 @@ class _InviteLinkCard extends StatelessWidget {
           const SizedBox(width: 10),
           IconButton(
             onPressed: onCopy,
-            icon: const Icon(Icons.copy, size: 18, color: Color(0xFFA0A0A0)),
+            icon: Icon(
+              Icons.copy,
+              size: 18,
+              color: isLight
+                  ? theme.colorScheme.onSurface.withOpacity(0.7)
+                  : const Color(0xFFA0A0A0),
+            ),
             tooltip: 'Copy',
           ),
           IconButton(
             onPressed: onShowQr,
-            icon: const Icon(
+            icon: Icon(
               Icons.qr_code_2,
               size: 18,
-              color: Color(0xFFA0A0A0),
+              color: isLight
+                  ? theme.colorScheme.onSurface.withOpacity(0.7)
+                  : const Color(0xFFA0A0A0),
             ),
             tooltip: 'QR',
           ),
@@ -1861,8 +2774,14 @@ class _InviteLinkCard extends StatelessWidget {
           OutlinedButton(
             onPressed: isBusy ? null : onRotate,
             style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Color(0xFF1A1A1A)),
-              foregroundColor: Colors.white,
+              side: BorderSide(
+                color: isLight
+                    ? Colors.black.withOpacity(0.05)
+                    : const Color(0xFF1A1A1A),
+              ),
+              foregroundColor: isLight
+                  ? theme.colorScheme.primary
+                  : Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
@@ -1871,10 +2790,32 @@ class _InviteLinkCard extends StatelessWidget {
             child: Text(
               isBusy
                   ? 'Generating...'
-                  : (inviteLink == null ? 'Generate' : 'Revoke'),
+                  : (inviteLink == null ? 'Generate' : 'Generate new'),
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
             ),
           ),
+          if (inviteLink != null) ...[
+            const SizedBox(width: 8),
+            OutlinedButton(
+              onPressed: isBusy ? null : onRevoke,
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: Colors.redAccent.withOpacity(0.35)),
+                backgroundColor: Colors.redAccent.withOpacity(0.1),
+                foregroundColor: Colors.redAccent,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text(
+                'Revoke',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1883,7 +2824,7 @@ class _InviteLinkCard extends StatelessWidget {
 
 class _DangerButton extends StatelessWidget {
   final String text;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   const _DangerButton({required this.text, required this.onTap});
 
   @override
@@ -1895,14 +2836,14 @@ class _DangerButton extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          color: Colors.transparent,
+          color: Colors.redAccent.withOpacity(0.1),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFF3A1F1F), width: 1),
+          border: Border.all(color: Colors.redAccent.withOpacity(0.35), width: 1),
         ),
         child: Text(
           text,
           style: const TextStyle(
-            color: Color(0xFFE24C4C),
+            color: Colors.redAccent,
             fontWeight: FontWeight.w600,
             fontSize: 13,
           ),
@@ -1911,3 +2852,4 @@ class _DangerButton extends StatelessWidget {
     );
   }
 }
+

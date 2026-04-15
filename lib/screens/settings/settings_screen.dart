@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+﻿import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -9,9 +9,11 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../providers/user_providers.dart';
 import '../../providers/auth_providers.dart';
+import '../../providers/chat_providers.dart';
 import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/supabase_service.dart';
+import '../../theme/theme.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -25,12 +27,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _editingBio = false;
   bool _saving = false;
 
-  String _themePref = 'dark';
   String _languagePref = 'English';
   String _bubbleSizePref = 'Medium';
   String _fontSizePref = 'Default';
   String _lastSeenPref = 'Everyone';
   bool _readReceipts = true;
+
+  String _themeValueFromMode(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.light:
+        return 'light';
+      case ThemeMode.dark:
+        return 'dark';
+      case ThemeMode.system:
+        return 'system';
+    }
+  }
 
   @override
   void dispose() {
@@ -117,7 +129,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     try {
       await FirestoreService().users.doc(uid).set({
         'settings': {
-          'theme': _themePref,
+          'theme': _themeValueFromMode(ref.read(themeModeProvider)),
           'language': _languagePref,
           'bubbleSize': _bubbleSizePref,
           'fontSize': _fontSizePref,
@@ -134,9 +146,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required List<String> options,
     required ValueChanged<String> onSelected,
   }) async {
+    final theme = Theme.of(context);
     final val = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: const Color(0xFF101010),
+      backgroundColor: theme.colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
@@ -150,10 +163,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white,
+                  color: theme.textTheme.bodyLarge?.color,
                 ),
               ),
               const SizedBox(height: 10),
@@ -163,12 +176,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   contentPadding: EdgeInsets.zero,
                   title: Text(
                     o,
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    style: TextStyle(
+                      color: theme.textTheme.bodyLarge?.color,
+                      fontSize: 14,
+                    ),
                   ),
                   trailing: isOn
-                      ? const Icon(
+                      ? Icon(
                           Icons.check,
-                          color: Color(0xFFC74B6C),
+                          color: theme.colorScheme.primary,
                           size: 20,
                         )
                       : null,
@@ -203,6 +219,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ).showSnackBar(SnackBar(content: Text('Failed to update bio: $e')));
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _logout(BuildContext context) async {
+    try {
+      await ref.read(firebaseAuthServiceProvider).signOut();
+
+      if (!context.mounted) return;
+
+      Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+    } catch (e) {
+      debugPrint('Logout error: $e');
     }
   }
 
@@ -242,18 +270,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final userDoc = ref.watch(userDocProvider(uid));
+    final themeMode = ref.watch(themeModeProvider);
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
 
     final me = FirebaseAuth.instance.currentUser;
     final email = me?.email ?? '';
     final phone = me?.phoneNumber;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF000000),
+      backgroundColor: isLight
+          ? theme.colorScheme.background
+          : const Color(0xFF000000),
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(52),
         child: AppBar(
           automaticallyImplyLeading: false,
-          backgroundColor: const Color(0xFF000000),
+          backgroundColor: isLight
+              ? theme.colorScheme.background
+              : const Color(0xFF000000),
           surfaceTintColor: Colors.transparent,
           elevation: 0,
           titleSpacing: 0,
@@ -261,19 +296,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             children: [
               IconButton(
                 onPressed: () => Navigator.pop(context),
-                icon: const Icon(
+                icon: Icon(
                   Icons.arrow_back,
                   size: 20,
-                  color: Color(0xFFA0A0A0),
+                  color: isLight ? Color(0xFF667085) : Color(0xFFA0A0A0),
                 ),
               ),
               const SizedBox(width: 2),
-              const Text(
+              Text(
                 'Settings',
                 style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white,
+                  color: isLight
+                      ? theme.colorScheme.onBackground
+                      : Colors.white,
                 ),
               ),
             ],
@@ -288,10 +325,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   initial: (u?.name ?? '').trim().isEmpty ? uid : u!.name,
                 );
               },
-              icon: const Icon(
+              icon: Icon(
                 Icons.edit_outlined,
                 size: 20,
-                color: Color(0xFFA0A0A0),
+                color: isLight ? const Color(0xFF667085) : const Color(0xFFA0A0A0),
               ),
             ),
             const SizedBox(width: 6),
@@ -327,7 +364,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           children: [
                             CircleAvatar(
                               radius: 43,
-                              backgroundColor: const Color(0xFF151515),
+                              backgroundColor: isLight
+                                  ? theme.colorScheme.surface
+                                  : const Color(0xFF151515),
                               backgroundImage: hasImage
                                   ? NetworkImage(url!)
                                   : null,
@@ -335,10 +374,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   ? null
                                   : Text(
                                       _initialsFrom(displayName),
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 18,
                                         fontWeight: FontWeight.w700,
-                                        color: Colors.white,
+                                        color: isLight
+                                            ? theme.colorScheme.onSurface
+                                            : Colors.white,
                                       ),
                                     ),
                             ),
@@ -352,9 +393,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   width: 26,
                                   height: 26,
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFC74B6C),
+                                    color: theme.colorScheme.primary,
                                     border: Border.all(
-                                      color: const Color(0xFF000000),
+                                      color: isLight
+                                          ? theme.colorScheme.background
+                                          : const Color(0xFF000000),
                                       width: 2,
                                     ),
                                     shape: BoxShape.circle,
@@ -383,10 +426,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                         child: Text(
                           displayName,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w600,
-                            color: Colors.white,
+                            color: isLight
+                                ? theme.colorScheme.onBackground
+                                : Colors.white,
                           ),
                         ),
                       ),
@@ -394,9 +439,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     const SizedBox(height: 10),
                     Text(
                       username,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
-                        color: Color(0xFF9A9A9A),
+                        color: isLight
+                            ? theme.colorScheme.onBackground.withOpacity(0.62)
+                            : const Color(0xFF9A9A9A),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -409,16 +456,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               child: TextField(
                                 controller: _bioCtrl,
                                 maxLines: 2,
-                                style: const TextStyle(
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  color: isLight
+                                      ? theme.colorScheme.onSurface
+                                      : Colors.white,
                                   fontSize: 13,
                                 ),
                                 decoration: InputDecoration(
                                   filled: true,
-                                  fillColor: const Color(0xFF101010),
+                                  fillColor: isLight
+                                      ? theme.colorScheme.surface
+                                      : const Color(0xFF101010),
                                   hintText: 'Your bio',
-                                  hintStyle: const TextStyle(
-                                    color: Color(0xFF6B6B6B),
+                                  hintStyle: TextStyle(
+                                    color: isLight
+                                        ? theme.colorScheme.onSurface
+                                              .withOpacity(0.55)
+                                        : const Color(0xFF6B6B6B),
                                     fontSize: 13,
                                   ),
                                   contentPadding: const EdgeInsets.symmetric(
@@ -427,14 +481,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   ),
                                   enabledBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(
-                                      color: Color(0xFF1A1A1A),
+                                    borderSide: BorderSide(
+                                      color: isLight
+                                          ? theme.dividerColor.withOpacity(0.6)
+                                          : const Color(0xFF1A1A1A),
                                     ),
                                   ),
                                   focusedBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(
-                                      color: Color(0xFF2A2A2A),
+                                    borderSide: BorderSide(
+                                      color: isLight
+                                          ? theme.colorScheme.primary
+                                          : const Color(0xFF2A2A2A),
                                     ),
                                   ),
                                 ),
@@ -445,21 +503,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               onPressed: _saving ? null : () => _saveBio(uid),
                               style: OutlinedButton.styleFrom(
                                 minimumSize: const Size(0, 44),
-                                side: const BorderSide(
-                                  color: Color(0xFF1A1A1A),
+                                side: BorderSide(
+                                  color: isLight
+                                      ? theme.dividerColor.withOpacity(0.65)
+                                      : const Color(0xFF1A1A1A),
                                 ),
-                                foregroundColor: Colors.white,
+                                foregroundColor: isLight
+                                    ? theme.colorScheme.onSurface
+                                    : Colors.white,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(14),
                                 ),
                               ),
                               child: _saving
-                                  ? const SizedBox(
+                                  ? SizedBox(
                                       width: 16,
                                       height: 16,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
-                                        color: Colors.white,
+                                        color: isLight
+                                            ? theme.colorScheme.primary
+                                            : Colors.white,
                                       ),
                                     )
                                   : const Text(
@@ -489,9 +553,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             textAlign: TextAlign.center,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 13,
-                              color: Color(0xFFA5A5A5),
+                              color: isLight
+                                  ? Color(0xFF667085)
+                                  : Color(0xFFA5A5A5),
                             ),
                           ),
                         ),
@@ -507,9 +573,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 margin: const EdgeInsets.symmetric(horizontal: 16),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF101010),
+                  color: isLight
+                      ? theme.colorScheme.surface
+                      : const Color(0xFF101010),
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+                  border: Border.all(
+                    color: isLight
+                        ? theme.dividerColor.withOpacity(0.65)
+                        : const Color(0xFF1A1A1A),
+                    width: 1,
+                  ),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -524,9 +597,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       icon: Icons.qr_code_2,
                       label: 'QR Code',
                       onTap: () {
+                        final sheetTheme = Theme.of(context);
+                        final sheetIsLight =
+                            sheetTheme.brightness == Brightness.light;
                         showModalBottomSheet<void>(
                           context: context,
-                          backgroundColor: const Color(0xFF101010),
+                          backgroundColor: sheetIsLight
+                              ? sheetTheme.colorScheme.surface
+                              : const Color(0xFF101010),
                           shape: const RoundedRectangleBorder(
                             borderRadius: BorderRadius.vertical(
                               top: Radius.circular(22),
@@ -544,12 +622,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Text(
+                                  Text(
                                     'Your QR Code',
                                     style: TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w600,
-                                      color: Colors.white,
+                                      color: sheetIsLight
+                                          ? sheetTheme.colorScheme.onSurface
+                                          : Colors.white,
                                     ),
                                   ),
                                   const SizedBox(height: 14),
@@ -568,9 +648,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   const SizedBox(height: 12),
                                   Text(
                                     username,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 13,
-                                      color: Color(0xFF8A8A8A),
+                                      color: sheetIsLight
+                                          ? sheetTheme.colorScheme.onSurface
+                                                .withOpacity(0.62)
+                                          : const Color(0xFF8A8A8A),
                                     ),
                                   ),
                                 ],
@@ -623,21 +706,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
               const SizedBox(height: 14),
 
-              const _SectionTitle('Preferences'),
-              _SettingsTile(
-                icon: Icons.dark_mode_outlined,
-                title: 'Theme',
-                value: _themePref == 'system' ? 'System' : 'Dark',
-                onTap: () => _openSelectorSheet(
-                  title: 'Theme',
-                  selected: _themePref,
-                  options: const ['dark', 'system'],
-                  onSelected: (v) {
-                    setState(() => _themePref = v);
-                    _persistPrefs(uid);
-                  },
-                ),
+              const _SectionTitle('Appearance'),
+              _AppearanceModeCard(
+                selectedMode: themeMode,
+                onSystem: () async {
+                  await ref.read(themeModeProvider.notifier).setSystem();
+                  if (!mounted) return;
+                  _persistPrefs(uid);
+                },
+                onLight: () async {
+                  await ref.read(themeModeProvider.notifier).setLight();
+                  if (!mounted) return;
+                  _persistPrefs(uid);
+                },
+                onDark: () async {
+                  await ref.read(themeModeProvider.notifier).setDark();
+                  if (!mounted) return;
+                  _persistPrefs(uid);
+                },
               ),
+
+              const SizedBox(height: 14),
+
+              const _SectionTitle('Preferences'),
               _SettingsTile(
                 icon: Icons.language_outlined,
                 title: 'Language',
@@ -723,9 +814,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     : '0',
                 onTap: () {
                   final blocked = user?.blockedUsers ?? const [];
+                  final sheetTheme = Theme.of(context);
+                  final sheetIsLight = sheetTheme.brightness == Brightness.light;
                   showModalBottomSheet<void>(
                     context: context,
-                    backgroundColor: const Color(0xFF101010),
+                    backgroundColor: sheetIsLight
+                        ? sheetTheme.colorScheme.surface
+                        : const Color(0xFF101010),
                     shape: const RoundedRectangleBorder(
                       borderRadius: BorderRadius.vertical(
                         top: Radius.circular(22),
@@ -739,23 +834,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
+                            Text(
                               'Blocked users',
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.white,
+                                color: sheetIsLight
+                                    ? sheetTheme.colorScheme.onSurface
+                                    : Colors.white,
                               ),
                             ),
                             const SizedBox(height: 10),
                             if (blocked.isEmpty)
-                              const Padding(
+                              Padding(
                                 padding: EdgeInsets.only(bottom: 16),
                                 child: Text(
                                   'No blocked users',
                                   style: TextStyle(
                                     fontSize: 13,
-                                    color: Color(0xFF8A8A8A),
+                                    color: sheetIsLight
+                                        ? sheetTheme.colorScheme.onSurface
+                                              .withOpacity(0.62)
+                                        : const Color(0xFF8A8A8A),
                                   ),
                                 ),
                               )
@@ -767,13 +867,61 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                       contentPadding: EdgeInsets.zero,
                                       title: Text(
                                         id,
-                                        style: const TextStyle(
-                                          color: Colors.white,
+                                        style: TextStyle(
+                                          color: sheetIsLight
+                                              ? sheetTheme.colorScheme.onSurface
+                                              : Colors.white,
                                         ),
                                       ),
-                                      trailing: const Icon(
-                                        Icons.chevron_right,
-                                        color: Color(0xFFA0A0A0),
+                                      trailing: TextButton(
+                                        onPressed: () async {
+                                          final messenger =
+                                              ScaffoldMessenger.of(context);
+                                          final confirm = await showDialog<bool>(
+                                            context: ctx,
+                                            builder: (dCtx) => AlertDialog(
+                                              title: const Text(
+                                                'Unblock user?',
+                                              ),
+                                              content: Text(
+                                                'Unblock $id and allow messages again.',
+                                              ),
+                                              actions: [
+                                                TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.pop(dCtx),
+                                                  child: const Text('Cancel'),
+                                                ),
+                                                TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.pop(dCtx, true),
+                                                  child: const Text('Unblock'),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                          if (!mounted) return;
+                                          if (confirm != true) return;
+
+                                          ref
+                                              .read(blockServiceProvider)
+                                              .unblockUser(peerId: id)
+                                              .catchError((e) {
+                                                messenger.showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      'Unblock failed: $e',
+                                                    ),
+                                                  ),
+                                                );
+                                              });
+                                        },
+                                        style: TextButton.styleFrom(
+                                          foregroundColor: sheetIsLight
+                                              ? sheetTheme.colorScheme.primary
+                                              : Colors.white,
+                                        ),
+                                        child: const Text('Unblock'),
                                       ),
                                     ),
                                   ),
@@ -819,11 +967,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: InkWell(
-                  onTap: () async {
-                    final nav = Navigator.of(context);
-                    await ref.read(firebaseAuthServiceProvider).signOut();
-                    if (!mounted) return;
-                    nav.pop();
+                  onTap: () {
+                    _logout(context);
                   },
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
@@ -836,7 +981,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       color: Colors.transparent,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: const Color(0xFF3A1F1F),
+                        color: isLight
+                            ? const Color(0xFFF1C5C5)
+                            : const Color(0xFF3A1F1F),
                         width: 1,
                       ),
                     ),
@@ -857,7 +1004,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         },
         loading: () => const _SettingsSkeleton(),
         error: (e, _) => Center(
-          child: Text('Error: $e', style: const TextStyle(color: Colors.white)),
+          child: Text(
+            'Error: $e',
+            style: TextStyle(
+              color: isLight ? theme.colorScheme.onBackground : Colors.white,
+            ),
+          ),
         ),
       ),
     );
@@ -870,14 +1022,141 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       child: Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w600,
-          color: Colors.white,
+          color: isLight ? theme.colorScheme.onBackground : Colors.white,
+        ),
+      ),
+    );
+  }
+}
+
+class _AppearanceModeCard extends StatelessWidget {
+  final ThemeMode selectedMode;
+  final VoidCallback onSystem;
+  final VoidCallback onLight;
+  final VoidCallback onDark;
+
+  const _AppearanceModeCard({
+    required this.selectedMode,
+    required this.onSystem,
+    required this.onLight,
+    required this.onDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      decoration: BoxDecoration(
+        color: isLight ? theme.colorScheme.surface : const Color(0xFF101010),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isLight
+              ? theme.dividerColor.withOpacity(0.65)
+              : const Color(0xFF1A1A1A),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        children: [
+          _AppearanceOptionTile(
+            icon: Icons.phone_android,
+            title: 'System Default',
+            selected: selectedMode == ThemeMode.system,
+            onTap: onSystem,
+          ),
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: isLight
+                ? theme.dividerColor.withOpacity(0.55)
+                : const Color(0xFF1E1E1E),
+          ),
+          _AppearanceOptionTile(
+            icon: Icons.light_mode,
+            title: 'Light',
+            selected: selectedMode == ThemeMode.light,
+            onTap: onLight,
+          ),
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: isLight
+                ? theme.dividerColor.withOpacity(0.55)
+                : const Color(0xFF1E1E1E),
+          ),
+          _AppearanceOptionTile(
+            icon: Icons.dark_mode,
+            title: 'Dark',
+            selected: selectedMode == ThemeMode.dark,
+            onTap: onDark,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AppearanceOptionTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _AppearanceOptionTile({
+    required this.icon,
+    required this.title,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
+    return SizedBox(
+      height: 52,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 28,
+                child: Icon(
+                  icon,
+                  size: 20,
+                  color: isLight ? const Color(0xFF667085) : const Color(0xFFA0A0A0),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: isLight
+                        ? theme.colorScheme.onSurface
+                        : Colors.white,
+                  ),
+                ),
+              ),
+              if (selected)
+                const Icon(Icons.check, size: 20, color: AppColors.primary),
+            ],
+          ),
         ),
       ),
     );
@@ -897,6 +1176,8 @@ class _QuickAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
@@ -905,13 +1186,19 @@ class _QuickAction extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 20, color: const Color(0xFFA0A0A0)),
+            Icon(
+              icon,
+              size: 20,
+              color: isLight ? const Color(0xFF667085) : const Color(0xFFA0A0A0),
+            ),
             const SizedBox(height: 6),
             Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
-                color: Color(0xFF9A9A9A),
+                color: isLight
+                    ? theme.colorScheme.onSurface.withOpacity(0.64)
+                    : const Color(0xFF9A9A9A),
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -937,6 +1224,8 @@ class _SettingsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return SizedBox(
       height: 52,
       child: InkWell(
@@ -953,38 +1242,52 @@ class _SettingsTile extends StatelessWidget {
                       child: Icon(
                         icon,
                         size: 20,
-                        color: const Color(0xFFA0A0A0),
+                        color: isLight
+                            ? const Color(0xFF667085)
+                            : const Color(0xFFA0A0A0),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
-                          color: Colors.white,
+                          color: isLight
+                              ? theme.colorScheme.onBackground
+                              : Colors.white,
                         ),
                       ),
                     ),
                     if ((value ?? '').trim().isNotEmpty)
                       Text(
                         value!,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
-                          color: Color(0xFF9A9A9A),
+                          color: isLight
+                              ? theme.colorScheme.onBackground.withOpacity(0.62)
+                              : const Color(0xFF9A9A9A),
                         ),
                       ),
                     const SizedBox(width: 8),
-                    const Icon(
+                    Icon(
                       Icons.chevron_right,
                       size: 20,
-                      color: Color(0xFFA0A0A0),
+                      color: isLight
+                          ? const Color(0xFF98A2B3)
+                          : const Color(0xFFA0A0A0),
                     ),
                   ],
                 ),
               ),
-              const Divider(height: 1, thickness: 1, color: Color(0xFF1E1E1E)),
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: isLight
+                    ? theme.dividerColor.withOpacity(0.55)
+                    : const Color(0xFF1E1E1E),
+              ),
             ],
           ),
         ),
@@ -1008,6 +1311,8 @@ class _ToggleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return SizedBox(
       height: 52,
       child: Padding(
@@ -1019,30 +1324,46 @@ class _ToggleTile extends StatelessWidget {
                 children: [
                   SizedBox(
                     width: 28,
-                    child: Icon(icon, size: 20, color: const Color(0xFFA0A0A0)),
+                    child: Icon(
+                      icon,
+                      size: 20,
+                      color: isLight
+                          ? const Color(0xFF667085)
+                          : const Color(0xFFA0A0A0),
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
-                        color: Colors.white,
+                        color: isLight
+                            ? theme.colorScheme.onBackground
+                            : Colors.white,
                       ),
                     ),
                   ),
                   Switch(
                     value: value,
                     onChanged: onChanged,
-                    activeColor: Colors.white,
-                    activeTrackColor: const Color(0xFFC74B6C),
-                    inactiveTrackColor: const Color(0xFF1E1E1E),
+                    activeColor: isLight ? Colors.white : Colors.white,
+                    activeTrackColor: theme.colorScheme.primary,
+                    inactiveTrackColor: isLight
+                        ? const Color(0xFFD5D9E1)
+                        : const Color(0xFF1E1E1E),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1, thickness: 1, color: Color(0xFF1E1E1E)),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: isLight
+                  ? theme.dividerColor.withOpacity(0.55)
+                  : const Color(0xFF1E1E1E),
+            ),
           ],
         ),
       ),
@@ -1062,32 +1383,41 @@ class _StorageUsageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     final total = (imagesMb + videosMb + docsMb).toDouble();
     final used = total == 0 ? 0.0 : 1.0;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF101010),
+        color: isLight ? theme.colorScheme.surface : const Color(0xFF101010),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+        border: Border.all(
+          color: isLight
+              ? theme.dividerColor.withOpacity(0.65)
+              : const Color(0xFF1A1A1A),
+          width: 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _row('Images', '${imagesMb}MB'),
+          _row(context, 'Images', '${imagesMb}MB'),
           const SizedBox(height: 6),
-          _row('Videos', '${videosMb}MB'),
+          _row(context, 'Videos', '${videosMb}MB'),
           const SizedBox(height: 6),
-          _row('Documents', '${docsMb}MB'),
+          _row(context, 'Documents', '${docsMb}MB'),
           const SizedBox(height: 12),
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: LinearProgressIndicator(
               value: used,
               minHeight: 6,
-              backgroundColor: const Color(0xFF1E1E1E),
-              valueColor: const AlwaysStoppedAnimation(Color(0xFFC74B6C)),
+              backgroundColor: isLight
+                  ? const Color(0xFFE4E7EC)
+                  : const Color(0xFF1E1E1E),
+              valueColor: AlwaysStoppedAnimation(theme.colorScheme.primary),
             ),
           ),
         ],
@@ -1095,17 +1425,32 @@ class _StorageUsageCard extends StatelessWidget {
     );
   }
 
-  Widget _row(String k, String v) => Row(
-    children: [
-      Expanded(
-        child: Text(
-          k,
-          style: const TextStyle(fontSize: 13, color: Color(0xFFA5A5A5)),
+  Widget _row(BuildContext context, String k, String v) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            k,
+            style: TextStyle(
+              fontSize: 13,
+              color: isLight
+                  ? theme.colorScheme.onSurface.withOpacity(0.64)
+                  : const Color(0xFFA5A5A5),
+            ),
+          ),
         ),
-      ),
-      Text(v, style: const TextStyle(fontSize: 13, color: Colors.white)),
-    ],
-  );
+        Text(
+          v,
+          style: TextStyle(
+            fontSize: 13,
+            color: isLight ? theme.colorScheme.onSurface : Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _SettingsSkeleton extends StatelessWidget {
@@ -1113,11 +1458,13 @@ class _SettingsSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     Widget bar({double w = double.infinity, double h = 12}) => Container(
       width: w,
       height: h,
       decoration: BoxDecoration(
-        color: const Color(0xFF151515),
+        color: isLight ? const Color(0xFFE9ECF2) : const Color(0xFF151515),
         borderRadius: BorderRadius.circular(10),
       ),
     );
@@ -1134,7 +1481,9 @@ class _SettingsSkeleton extends StatelessWidget {
                   width: 28,
                   height: 28,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF151515),
+                    color: isLight
+                        ? const Color(0xFFE9ECF2)
+                        : const Color(0xFF151515),
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
@@ -1144,7 +1493,13 @@ class _SettingsSkeleton extends StatelessWidget {
               ],
             ),
           ),
-          const Divider(height: 1, thickness: 1, color: Color(0xFF1E1E1E)),
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: isLight
+                ? theme.dividerColor.withOpacity(0.55)
+                : const Color(0xFF1E1E1E),
+          ),
         ],
       ),
     );
@@ -1159,8 +1514,8 @@ class _SettingsSkeleton extends StatelessWidget {
               Container(
                 width: 86,
                 height: 86,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF151515),
+                decoration: BoxDecoration(
+                  color: isLight ? Color(0xFFE9ECF2) : Color(0xFF151515),
                   shape: BoxShape.circle,
                 ),
               ),
@@ -1187,9 +1542,14 @@ class _SettingsSkeleton extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 16),
           height: 70,
           decoration: BoxDecoration(
-            color: const Color(0xFF101010),
+            color: isLight ? theme.colorScheme.surface : const Color(0xFF101010),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+            border: Border.all(
+              color: isLight
+                  ? theme.dividerColor.withOpacity(0.65)
+                  : const Color(0xFF1A1A1A),
+              width: 1,
+            ),
           ),
         ),
         const SizedBox(height: 18),
@@ -1218,9 +1578,14 @@ class _SettingsSkeleton extends StatelessWidget {
           margin: const EdgeInsets.fromLTRB(16, 8, 16, 10),
           height: 92,
           decoration: BoxDecoration(
-            color: const Color(0xFF101010),
+            color: isLight ? theme.colorScheme.surface : const Color(0xFF101010),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+            border: Border.all(
+              color: isLight
+                  ? theme.dividerColor.withOpacity(0.65)
+                  : const Color(0xFF1A1A1A),
+              width: 1,
+            ),
           ),
         ),
         tile(),
@@ -1230,10 +1595,14 @@ class _SettingsSkeleton extends StatelessWidget {
           height: 46,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF3A1F1F), width: 1),
+            border: Border.all(
+              color: isLight ? const Color(0xFFF1C5C5) : const Color(0xFF3A1F1F),
+              width: 1,
+            ),
           ),
         ),
       ],
     );
   }
 }
+

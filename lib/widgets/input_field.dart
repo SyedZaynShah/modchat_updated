@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+﻿import 'dart:typed_data';
 import 'dart:io';
 import 'dart:async';
 import 'package:file_picker/file_picker.dart';
@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../theme/theme.dart';
 import '../models/message_model.dart';
+import '../services/firestore_service.dart';
 
 typedef SendText = Future<void> Function(String text);
 typedef SendMedia =
@@ -19,6 +20,8 @@ typedef SendMedia =
       String fileName,
       String contentType,
       MessageType type, {
+      String? localPath,
+      String? thumbnailPath,
       int? durationMs,
     });
 
@@ -26,12 +29,18 @@ class InputField extends StatefulWidget {
   final SendText onSend;
   final SendMedia onSendMedia;
   final ValueChanged<bool>? onTypingChanged;
+  final ValueChanged<String>? onTextChanged;
+  final ValueChanged<bool>? onVoiceRecordingChanged;
+  final bool sendDisabled;
 
   const InputField({
     super.key,
     required this.onSend,
     required this.onSendMedia,
     this.onTypingChanged,
+    this.onTextChanged,
+    this.onVoiceRecordingChanged,
+    this.sendDisabled = false,
   });
 
   @override
@@ -42,6 +51,10 @@ class _InputFieldState extends State<InputField> {
   final _controller = TextEditingController();
   bool _hasText = false;
 
+  Future<void> _sendQueue = Future<void>.value();
+
+  bool _fsRecoveryInFlight = false;
+
   // Voice note state
   final AudioRecorder _rec = AudioRecorder();
   bool _recording = false;
@@ -49,11 +62,13 @@ class _InputFieldState extends State<InputField> {
   String? _recPath;
   StreamSubscription<Amplitude>? _ampSub;
   Timer? _tick;
-  double _amp = 0.0; // 0..1
   final List<double> _wave = <double>[]; // recent amps
 
   @override
   void dispose() {
+    if (_recording) {
+      widget.onVoiceRecordingChanged?.call(false);
+    }
     _controller.dispose();
     _ampSub?.cancel();
     _tick?.cancel();
@@ -67,13 +82,20 @@ class _InputFieldState extends State<InputField> {
     if (x == null) return;
     final bytes = await x.readAsBytes();
     final name = x.name;
+    final localPath = kIsWeb ? null : x.path;
     final mime =
         lookupMimeType(
           name,
           headerBytes: bytes.sublist(0, bytes.length > 32 ? 32 : bytes.length),
         ) ??
         'image/*';
-    await widget.onSendMedia(bytes, name, mime, MessageType.image);
+    await widget.onSendMedia(
+      bytes,
+      name,
+      mime,
+      MessageType.image,
+      localPath: localPath,
+    );
   }
 
   Future<void> _pickFile() async {
@@ -150,7 +172,6 @@ class _InputFieldState extends State<InputField> {
       type: type,
       allowedExtensions: exts,
       allowMultiple: false,
-      allowCompression: false,
       withData: false,
       withReadStream: true,
     );
@@ -173,6 +194,8 @@ class _InputFieldState extends State<InputField> {
     }
     if (bytes == null) return;
 
+    final localPath = kIsWeb ? null : f.path;
+
     String? mime = lookupMimeType(
       name,
       headerBytes: bytes.isNotEmpty
@@ -181,7 +204,7 @@ class _InputFieldState extends State<InputField> {
     );
     mime ??= _inferMime(name);
     final typeOut = _typeFromMime(mime);
-    await widget.onSendMedia(bytes, name, mime, typeOut);
+    await widget.onSendMedia(bytes, name, mime, typeOut, localPath: localPath);
   }
 
   String _inferMime(String name) {
@@ -245,7 +268,6 @@ class _InputFieldState extends State<InputField> {
       );
       _recPath = path;
       _wave.clear();
-      _amp = 0;
       _ampSub?.cancel();
       _ampSub = _rec
           .onAmplitudeChanged(const Duration(milliseconds: 80))
@@ -254,7 +276,6 @@ class _InputFieldState extends State<InputField> {
             final norm = ((cur + 60.0) / 60.0).clamp(0.0, 1.0).toDouble();
             if (!mounted) return;
             setState(() {
-              _amp = norm;
               _wave.add(norm);
               if (_wave.length > 32) _wave.removeAt(0);
             });
@@ -266,6 +287,7 @@ class _InputFieldState extends State<InputField> {
       setState(() {
         _recording = true;
       });
+      widget.onVoiceRecordingChanged?.call(true);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -290,6 +312,7 @@ class _InputFieldState extends State<InputField> {
       _recording = false;
       _recPath = null;
     });
+    widget.onVoiceRecordingChanged?.call(false);
   }
 
   Future<void> _finishRecSend() async {
@@ -303,6 +326,7 @@ class _InputFieldState extends State<InputField> {
     setState(() {
       _recording = false;
     });
+    widget.onVoiceRecordingChanged?.call(false);
     if (path == null) return;
     final bytes = await File(path).readAsBytes();
     await widget.onSendMedia(
@@ -321,44 +345,82 @@ class _InputFieldState extends State<InputField> {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
 
-    // Clear immediately so the UI feels instant and the user can keep typing.
+    final draft = text;
     _controller.clear();
     if (_hasText) {
       setState(() => _hasText = false);
       widget.onTypingChanged?.call(false);
+      widget.onTextChanged?.call('');
     }
 
-    widget.onSend(text).catchError((e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Send failed: $e')));
+    _sendQueue = _sendQueue.catchError((_) {}).then((_) async {
+      try {
+        await widget.onSend(text);
+      } catch (e) {
+        final msg = e.toString();
+
+        if (kIsWeb &&
+            !_fsRecoveryInFlight &&
+            (msg.contains('INTERNAL ASSERTION FAILED') ||
+                msg.contains('Unexpected state'))) {
+          _fsRecoveryInFlight = true;
+          try {
+            await FirestoreService.resetPersistenceAndNetwork();
+          } catch (_) {
+            // ignore
+          } finally {
+            _fsRecoveryInFlight = false;
+          }
+        }
+
+        if (!mounted) return;
+        if (_controller.text.trim().isEmpty) {
+          _controller.text = draft;
+          _controller.selection = TextSelection.fromPosition(
+            TextPosition(offset: _controller.text.length),
+          );
+          if (!_hasText) {
+            setState(() => _hasText = true);
+            widget.onTypingChanged?.call(true);
+            widget.onTextChanged?.call(_controller.text);
+          }
+        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Send failed: $e')));
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final inputBg = isDark ? const Color(0xFF0F0F0F) : AppColors.inputBgLight;
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 12),
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      height: 52,
+      height: 48,
       decoration: BoxDecoration(
-        color: const Color(0xFF0F0F0F),
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+        color: inputBg,
+        borderRadius: BorderRadius.circular(24),
       ),
       child: _recording ? _buildRecordingUI() : _buildNormalUI(),
     );
   }
 
   Widget _buildNormalUI() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? Colors.white : AppColors.textLightPrimary;
+    final hintColor = isDark ? const Color(0xFF8A8A8A) : AppColors.textLightSecondary;
+    final iconColor = isDark ? const Color(0xFF9A9A9A) : AppColors.textLightSecondary;
     return Row(
       children: [
         IconButton(
           onPressed: _pickFile,
-          icon: const Icon(
+          icon: Icon(
             Icons.attach_file,
-            color: Color(0xFF9A9A9A),
+            color: iconColor,
             size: 20,
           ),
         ),
@@ -368,16 +430,17 @@ class _InputFieldState extends State<InputField> {
             minLines: 1,
             maxLines: 4,
             onChanged: (v) {
+              widget.onTextChanged?.call(v);
               final has = v.trim().isNotEmpty;
               if (has != _hasText) {
                 setState(() => _hasText = has);
                 widget.onTypingChanged?.call(has);
               }
             },
-            style: const TextStyle(color: Colors.white, fontSize: 14),
-            decoration: const InputDecoration(
+            style: TextStyle(color: textColor, fontSize: 14),
+            decoration: InputDecoration(
               hintText: 'Message',
-              hintStyle: TextStyle(color: Color(0xFF8A8A8A), fontSize: 14),
+              hintStyle: TextStyle(color: hintColor, fontSize: 14),
               border: InputBorder.none,
               isDense: true,
               contentPadding: EdgeInsets.symmetric(
@@ -394,6 +457,10 @@ class _InputFieldState extends State<InputField> {
   }
 
   Widget _buildRecordingUI() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? Colors.white : AppColors.textLightPrimary;
+    final actionBg = Theme.of(context).colorScheme.primary;
+    final actionFg = Theme.of(context).colorScheme.onPrimary;
     return Row(
       children: [
         Expanded(
@@ -404,10 +471,10 @@ class _InputFieldState extends State<InputField> {
               const SizedBox(width: 10),
               Text(
                 _fmtElapsed(),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  color: Colors.white,
+                  color: textColor,
                 ),
               ),
             ],
@@ -417,7 +484,7 @@ class _InputFieldState extends State<InputField> {
           onPressed: _cancelRec,
           icon: const Icon(
             Icons.delete_outline,
-            color: Color(0xFFC74B6C),
+            color: Color(0xFF5865F2),
             size: 20,
           ),
         ),
@@ -427,11 +494,11 @@ class _InputFieldState extends State<InputField> {
           child: Container(
             width: 36,
             height: 36,
-            decoration: const BoxDecoration(
-              color: Colors.white,
+            decoration: BoxDecoration(
+              color: actionBg,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.send, color: Colors.black, size: 20),
+            child: Icon(Icons.send, color: actionFg, size: 20),
           ),
         ),
       ],
@@ -439,8 +506,11 @@ class _InputFieldState extends State<InputField> {
   }
 
   Widget _buildActionButton() {
+    final actionBg = Theme.of(context).colorScheme.primary;
+    final actionFg = Theme.of(context).colorScheme.onPrimary;
     return GestureDetector(
       onTap: () {
+        if (widget.sendDisabled) return;
         if (_hasText) {
           _send();
           return;
@@ -452,13 +522,13 @@ class _InputFieldState extends State<InputField> {
       child: Container(
         width: 36,
         height: 36,
-        decoration: const BoxDecoration(
-          color: Colors.white,
+        decoration: BoxDecoration(
+          color: actionBg,
           shape: BoxShape.circle,
         ),
         child: Icon(
           _hasText ? Icons.send : Icons.mic,
-          color: Colors.black,
+          color: widget.sendDisabled ? const Color(0xFF5A5A5A) : actionFg,
           size: 20,
         ),
       ),
@@ -513,3 +583,4 @@ extension on List<double> {
     return sublist(length - n);
   }
 }
+

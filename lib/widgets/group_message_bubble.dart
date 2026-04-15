@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -19,6 +19,8 @@ class GroupMessageBubble extends ConsumerWidget {
   final double bottomSpacing;
   final String groupChatId;
   final Map<String, int>? reactionsOverride;
+  final String? myReaction;
+  final VoidCallback? onReactionsTap;
   final void Function(String messageId)? onOpenThread;
   final ValueChanged<String>? onReplyCardTap;
 
@@ -29,6 +31,8 @@ class GroupMessageBubble extends ConsumerWidget {
     required this.showIdentity,
     required this.groupChatId,
     this.reactionsOverride,
+    this.myReaction,
+    this.onReactionsTap,
     this.onOpenThread,
     this.onReplyCardTap,
     this.isPinned = false,
@@ -38,9 +42,46 @@ class GroupMessageBubble extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final primaryText = isDark
+        ? AppColors.textDarkPrimary
+        : AppColors.textLightPrimary;
+    final secondaryText = isDark
+        ? AppColors.textDarkSecondary
+        : AppColors.textLightSecondary;
+    final timeText = isDark ? AppColors.textDarkSecondary : AppColors.timeTextLight;
+
+    if (message.kind == 'system') {
+      final t = (message.text ?? '').trim();
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Align(
+          alignment: Alignment.center,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 150),
+            switchInCurve: Curves.easeOut,
+            transitionBuilder: (child, anim) =>
+                FadeTransition(opacity: anim, child: child),
+            child: Text(
+              t,
+              key: ValueKey(message.id),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF888888),
+                height: 1.2,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     final effectiveReactions = reactionsOverride ?? message.reactions;
     final align = isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
-    const textColor = Color(0xFFFFFFFF);
+    final textColor = primaryText;
     final z = message.messageType == MessageType.text
         ? zoom.clamp(1.0, 1.6)
         : 1.0;
@@ -73,9 +114,25 @@ class GroupMessageBubble extends ConsumerWidget {
           opacity: 1.0,
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
-          child: _content(context, textColor, z),
+          child: _content(
+            context,
+            textColor,
+            z,
+            secondaryText: secondaryText,
+            timeText: timeText,
+          ),
         );
       }
+
+      final incomingBubble = isDark
+          ? AppColors.darkCard
+          : AppColors.incomingBubbleLight;
+      final outgoingBubble = isDark
+          ? AppColors.primary.withOpacity(0.2)
+          : AppColors.outgoingBubbleLight;
+      final incomingBorder = isDark
+          ? AppColors.darkBorder
+          : AppColors.bubbleBorderLight;
 
       return AnimatedOpacity(
         opacity: 1.0,
@@ -85,14 +142,23 @@ class GroupMessageBubble extends ConsumerWidget {
           scale: 1.0,
           child: Container(
             decoration: BoxDecoration(
-              color: const Color(0xFF141414),
+              color: isMe ? outgoingBubble : incomingBubble,
               borderRadius: BorderRadius.circular(14),
+              border: !isMe
+                  ? Border.all(color: incomingBorder, width: 1)
+                  : null,
             ),
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: maxBubbleWidth),
               child: Padding(
                 padding: bubblePadding,
-                child: _content(context, textColor, z),
+                child: _content(
+                  context,
+                  textColor,
+                  z,
+                  secondaryText: secondaryText,
+                  timeText: timeText,
+                ),
               ),
             ),
           ),
@@ -127,7 +193,11 @@ class GroupMessageBubble extends ConsumerWidget {
           if ((effectiveReactions ?? const {}).isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: _ReactionsRow(reactions: effectiveReactions ?? const {}),
+              child: _ReactionsRow(
+                reactions: effectiveReactions ?? const {},
+                myReaction: myReaction,
+                onTap: onReactionsTap,
+              ),
             ),
           if ((message.threadReplyCount ?? 0) > 0)
             Padding(
@@ -195,6 +265,8 @@ class GroupMessageBubble extends ConsumerWidget {
                       padding: const EdgeInsets.only(top: 4),
                       child: _ReactionsRow(
                         reactions: effectiveReactions ?? const {},
+                        myReaction: myReaction,
+                        onTap: onReactionsTap,
                       ),
                     ),
                   if ((message.threadReplyCount ?? 0) > 0)
@@ -217,7 +289,13 @@ class GroupMessageBubble extends ConsumerWidget {
     );
   }
 
-  Widget _content(BuildContext context, Color textColor, double z) {
+  Widget _content(
+    BuildContext context,
+    Color textColor,
+    double z, {
+    required Color secondaryText,
+    required Color timeText,
+  }) {
     if (message.isDeletedForAll) {
       final style = TextStyle(
         fontSize: 12 * (message.messageType == MessageType.text ? z : 1.0),
@@ -233,14 +311,14 @@ class GroupMessageBubble extends ConsumerWidget {
     }
 
     final forwardedTag = (message.forwarded)
-        ? const Padding(
-            padding: EdgeInsets.only(bottom: 4),
+        ? Padding(
+            padding: const EdgeInsets.only(bottom: 4),
             child: Text(
               'Forwarded',
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFFE5E5E5),
+                color: secondaryText,
                 height: 1.1,
               ),
             ),
@@ -262,7 +340,7 @@ class GroupMessageBubble extends ConsumerWidget {
               child: Text(t),
             ),
             const SizedBox(height: 6),
-            _metaRow(textColor),
+            _metaRow(textColor, timeText: timeText),
           ],
         );
       case MessageType.image:
@@ -275,8 +353,25 @@ class GroupMessageBubble extends ConsumerWidget {
             FilePreviewWidget(message: message, isMe: isMe),
           ],
         );
-      case MessageType.file:
       case MessageType.audio:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            forwardedTag,
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceVariant,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: FilePreviewWidget(message: message, isMe: isMe),
+            ),
+            const SizedBox(height: 6),
+            _metaRow(textColor, timeText: timeText),
+          ],
+        );
+      case MessageType.file:
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -284,18 +379,17 @@ class GroupMessageBubble extends ConsumerWidget {
             forwardedTag,
             FilePreviewWidget(message: message, isMe: isMe),
             const SizedBox(height: 6),
-            _metaRow(textColor),
+            _metaRow(textColor, timeText: timeText),
           ],
         );
     }
   }
 
-  Widget _metaRow(Color baseColor) {
-    const timeColor = Color(0xFFFFFFFF);
+  Widget _metaRow(Color baseColor, {required Color timeText}) {
     final List<Widget> children = [
       Text(
         _formatTime(),
-        style: const TextStyle(fontSize: 10, color: timeColor),
+        style: TextStyle(fontSize: 10, color: timeText),
       ),
     ];
 
@@ -307,13 +401,19 @@ class GroupMessageBubble extends ConsumerWidget {
           : (message.status == 3
                 ? Icons.done_all_rounded
                 : (message.status == 2 ? Icons.done : Icons.done));
-      children.add(Icon(iconData, size: 12, color: timeColor));
+      children.add(
+        Icon(
+          iconData,
+          size: 12,
+          color: message.status == 3 ? AppColors.primary : timeText,
+        ),
+      );
     }
 
     if (message.edited) {
       children.add(const SizedBox(width: 6));
       children.add(
-        const Text('Edited', style: TextStyle(fontSize: 10, color: timeColor)),
+        Text('Edited', style: TextStyle(fontSize: 10, color: timeText)),
       );
     }
 
@@ -379,7 +479,9 @@ class _SenderAvatar extends ConsumerWidget {
                   : Icon(
                       Icons.person,
                       size: size * 0.5,
-                      color: AppColors.white.withValues(alpha: 0.75),
+                      color: Theme.of(
+                        context,
+                      ).iconTheme.color?.withValues(alpha: 0.75),
                     ),
             );
           },
@@ -439,10 +541,10 @@ class _SenderHeader extends ConsumerWidget {
                           display,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            color: Color(0xFFE5E5E5),
+                            color: Theme.of(context).colorScheme.onSurface,
                             height: 1.1,
                           ),
                         ),
@@ -454,9 +556,11 @@ class _SenderHeader extends ConsumerWidget {
                 const SizedBox(width: 8),
                 Text(
                   _formatTime(),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
-                    color: Color(0xFF8A8A8A),
+                    color: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.color?.withOpacity(0.7),
                     height: 1.1,
                   ),
                 ),
@@ -477,9 +581,9 @@ class _RoleBadge extends StatelessWidget {
   final Color fg;
   const _RoleBadge._(this.label, this.bg, this.fg);
   const _RoleBadge.admin()
-    : this._('ADMIN', const Color(0xFF1E1E1E), Colors.white);
+    : this._('ADMIN', const Color(0xFF1E1E1E), AppColors.textDarkPrimary);
   const _RoleBadge.owner()
-    : this._('OWNER', const Color(0xFFC74B6C), Colors.white);
+    : this._('OWNER', const Color(0xFF5865F2), AppColors.textDarkPrimary);
 
   @override
   Widget build(BuildContext context) {
@@ -517,18 +621,20 @@ class _ReplyPreview extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     final senderId = (replyToSenderId ?? '').trim();
     final preview = (replyToText ?? '').trim();
     final user = senderId.isEmpty ? null : ref.watch(userDocProvider(senderId));
 
     Widget nameWidget() {
       if (user == null) {
-        return const Text(
+        return Text(
           'Reply',
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w600,
-            color: Color(0xFFE5E5E5),
+            color: isLight ? const Color(0xFF111827) : const Color(0xFFE5E5E5),
             height: 1.1,
           ),
         );
@@ -542,10 +648,12 @@ class _ReplyPreview extends ConsumerWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             softWrap: false,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: Color(0xFFE5E5E5),
+              color: isLight
+                  ? const Color(0xFF111827)
+                  : const Color(0xFFE5E5E5),
               height: 1.1,
             ),
           );
@@ -562,9 +670,12 @@ class _ReplyPreview extends ConsumerWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         decoration: BoxDecoration(
-          color: const Color(0xFF101010),
+          color: isLight ? const Color(0xFFF3F4F6) : const Color(0xFF101010),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+          border: Border.all(
+            color: isLight ? const Color(0xFFD1D5DB) : const Color(0xFF1A1A1A),
+            width: 1,
+          ),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -573,7 +684,7 @@ class _ReplyPreview extends ConsumerWidget {
               width: 2,
               height: 28,
               decoration: BoxDecoration(
-                color: const Color(0xFFC74B6C),
+                color: const Color(0xFF5865F2),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -592,8 +703,12 @@ class _ReplyPreview extends ConsumerWidget {
                     style: TextStyle(
                       fontSize: 11,
                       color: preview.isEmpty
-                          ? const Color(0xFF888888)
-                          : const Color(0xFFB5B5B5),
+                        ? (isLight
+                          ? const Color(0xFF6B7280)
+                          : const Color(0xFF888888))
+                        : (isLight
+                          ? const Color(0xFF4B5563)
+                          : const Color(0xFFB5B5B5)),
                       fontStyle: preview.isEmpty
                           ? FontStyle.italic
                           : FontStyle.normal,
@@ -612,35 +727,73 @@ class _ReplyPreview extends ConsumerWidget {
 
 class _ReactionsRow extends StatelessWidget {
   final Map<String, int> reactions;
-  const _ReactionsRow({required this.reactions});
+  final String? myReaction;
+  final VoidCallback? onTap;
+  const _ReactionsRow({
+    required this.reactions,
+    this.myReaction,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final entries = reactions.entries.where((e) => e.value > 0).toList();
     if (entries.isEmpty) return const SizedBox.shrink();
-    return Wrap(
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final chips = Wrap(
       spacing: 6,
       runSpacing: 6,
-      children: entries
-          .take(4)
-          .map(
-            (e) => Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1A1A),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                '${e.key} ${e.value}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Colors.white,
-                  height: 1.0,
-                ),
-              ),
+      children: entries.take(4).map((e) {
+        final selected = myReaction == e.key;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: selected
+                ? (isLight
+                      ? const Color(0xFF5865F2).withOpacity(0.15)
+                      : const Color(0xFF5865F2).withOpacity(0.25))
+                : (isLight ? const Color(0xFFF3F4F6) : const Color(0xFF1A1A1A)),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFF5865F2)
+                  : (isLight
+                        ? const Color(0xFFE5E7EB)
+                        : const Color(0xFF2A2A2A)),
+              width: 1,
             ),
-          )
-          .toList(),
+          ),
+          child: Text(
+            '${e.key} ${e.value}',
+            style: TextStyle(
+              fontSize: 11,
+              color: isLight ? const Color(0xFF111827) : Colors.white,
+              height: 1.0,
+            ),
+          ),
+        );
+      }).toList(),
+    );
+    final animated = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 170),
+      switchInCurve: Curves.easeOutBack,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, anim) => FadeTransition(
+        opacity: anim,
+        child: ScaleTransition(scale: anim, child: child),
+      ),
+      child: KeyedSubtree(
+        key: ValueKey(entries.map((e) => '${e.key}:${e.value}').join('|')),
+        child: chips,
+      ),
+    );
+    if (onTap == null) return animated;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: animated,
     );
   }
 }
@@ -658,10 +811,10 @@ class _ThreadIndicator extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
         child: Text(
-          '$count replies  ·  View thread',
+          '$count replies  -  View thread',
           style: const TextStyle(
             fontSize: 11,
-            color: Color(0xFFC74B6C),
+            color: Color(0xFF5865F2),
             fontWeight: FontWeight.w600,
             height: 1.1,
           ),
@@ -670,3 +823,5 @@ class _ThreadIndicator extends StatelessWidget {
     );
   }
 }
+
+

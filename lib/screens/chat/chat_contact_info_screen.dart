@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:video_player/video_player.dart';
@@ -30,6 +30,46 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
   int _tabIndex = 0; // 0 media, 1 documents, 2 links, 3 voice
   bool _showAllMedia = false;
 
+  Future<void> _confirmAndBlock() async {
+    final service = ref.read(blockServiceProvider);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Block this user?'),
+        content: const Text("You won't receive messages or calls from them."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Block'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (confirm != true) return;
+
+    service.blockUser(peerId: widget.peerId).catchError((e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Block failed: $e')));
+    });
+  }
+
+  Future<void> _unblock() async {
+    final service = ref.read(blockServiceProvider);
+    service.unblockUser(peerId: widget.peerId).catchError((e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Unblock failed: $e')));
+    });
+  }
+
   Future<ImageProvider?> _resolve(String? url) async {
     if (url == null || url.isEmpty) return null;
     if (url.startsWith('sb://')) {
@@ -59,8 +99,13 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
     final user = ref.watch(userDocProvider(widget.peerId));
     final messages = ref.watch(messagesProvider(widget.chatId));
     final bubbleZoom = bubbleZoomStore[widget.chatId] ?? 1.0;
+    final status = ref.watch(dmBlockStatusProvider(widget.peerId));
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: isLight
+          ? theme.colorScheme.background
+          : theme.scaffoldBackgroundColor,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(56),
         child: SafeArea(
@@ -70,20 +115,20 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
               children: [
                 IconButton(
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.arrow_back_ios_new,
-                    color: Colors.white,
+                    color: theme.textTheme.bodyLarge?.color,
                     size: 20,
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Contact info',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white,
+                      color: theme.textTheme.bodyLarge?.color,
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
@@ -91,22 +136,33 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                 ),
                 GlassDropdown(
                   tooltip: 'More',
-                  items: const [
+                  items: [
                     GlassDropdownItem(
-                      value: 'block',
-                      label: 'Block',
+                      value: status.iBlocked ? 'unblock' : 'block',
+                      label: status.iBlocked ? 'Unblock' : 'Block',
                       icon: Icons.block,
-                      isDestructive: true,
+                      isDestructive: !status.iBlocked,
                     ),
-                    GlassDropdownItem(
+                    const GlassDropdownItem(
                       value: 'report',
                       label: 'Report',
                       icon: Icons.flag,
                       isDestructive: true,
                     ),
                   ],
-                  onSelected: (v) {},
-                  child: const Icon(Icons.more_vert, color: Colors.white),
+                  onSelected: (v) {
+                    if (v == 'block') {
+                      _confirmAndBlock();
+                      return;
+                    }
+                    if (v == 'unblock') {
+                      _unblock();
+                    }
+                  },
+                  child: Icon(
+                    Icons.more_vert,
+                    color: theme.textTheme.bodyLarge?.color,
+                  ),
                 ),
               ],
             ),
@@ -133,13 +189,18 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                             children: [
                               CircleAvatar(
                                 radius: 40,
-                                backgroundColor: const Color(0xFF1A1A1A),
+                                backgroundColor: isLight
+                                    ? theme.colorScheme.surface
+                                    : const Color(0xFF1A1A1A),
                                 backgroundImage: snap.data,
                                 child: snap.data == null
-                                    ? const Icon(
+                                    ? Icon(
                                         Icons.person,
                                         size: 28,
-                                        color: Colors.white54,
+                                        color: isLight
+                                            ? theme.colorScheme.onBackground
+                                                  .withOpacity(0.6)
+                                            : Colors.white54,
                                       )
                                     : null,
                               ),
@@ -150,10 +211,12 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                                   width: 10,
                                   height: 10,
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFC74B6C),
+                                    color: const Color(0xFF5865F2),
                                     shape: BoxShape.circle,
                                     border: Border.all(
-                                      color: Colors.black,
+                                      color: isLight
+                                          ? theme.colorScheme.background
+                                          : Colors.black,
                                       width: 2,
                                     ),
                                   ),
@@ -168,8 +231,8 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                         name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: theme.colorScheme.onBackground,
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
                         ),
@@ -181,8 +244,10 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                           textAlign: TextAlign.center,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Color(0xFFA5A5A5),
+                          style: TextStyle(
+                            color: theme.colorScheme.onBackground.withOpacity(
+                              0.6,
+                            ),
                             fontSize: 13,
                           ),
                         ),
@@ -234,10 +299,10 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const SizedBox(height: 6),
-                      const Text(
+                      Text(
                         'Chat Settings',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: theme.colorScheme.onBackground,
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
@@ -263,9 +328,11 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
                       ),
                       _SettingsTile(
                         icon: Icons.block,
-                        title: 'Block contact',
+                        title: status.iBlocked
+                            ? 'Unblock contact'
+                            : 'Block contact',
                         danger: true,
-                        onTap: () {},
+                        onTap: status.iBlocked ? _unblock : _confirmAndBlock,
                       ),
                       _SettingsTile(
                         icon: Icons.delete_outline,
@@ -318,6 +385,8 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
   }
 
   Widget _buildTabContent(BuildContext context, List<MessageModel> list) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     if (_tabIndex == 0) {
       final media = list
           .where(
@@ -346,7 +415,11 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
               padding: const EdgeInsets.only(top: 10),
               child: TextButton(
                 onPressed: () => setState(() => _showAllMedia = true),
-                style: TextButton.styleFrom(foregroundColor: Colors.white),
+                style: TextButton.styleFrom(
+                  foregroundColor: isLight
+                      ? theme.colorScheme.primary
+                      : Colors.white,
+                ),
                 child: const Text('Show more'),
               ),
             ),
@@ -374,7 +447,11 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
               message: m,
               resolveUrl: (raw) => _resolveMediaTileUrl(raw, m.messageType),
             ),
-            const Divider(height: 1, color: Color(0xFF1E1E1E)),
+            Divider(
+              height: 1,
+              thickness: 0.5,
+              color: Colors.black.withOpacity(0.05),
+            ),
           ],
         ],
       );
@@ -471,12 +548,19 @@ class _QuickActionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF111111),
+        color: isLight ? theme.colorScheme.surface : const Color(0xFF111111),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+        border: Border.all(
+          color: isLight
+              ? Colors.black.withOpacity(0.05)
+              : const Color(0xFF1A1A1A),
+          width: 1,
+        ),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -515,6 +599,8 @@ class _QuickAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
@@ -523,14 +609,22 @@ class _QuickAction extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 20, color: Colors.white),
+            Icon(
+              icon,
+              size: 20,
+              color: isLight
+                  ? theme.colorScheme.onSurface.withOpacity(0.7)
+                  : Colors.white,
+            ),
             const SizedBox(height: 6),
             Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: isLight
+                    ? theme.colorScheme.onSurface.withOpacity(0.7)
+                    : Colors.white,
                 fontSize: 11,
                 fontWeight: FontWeight.w500,
               ),
@@ -589,7 +683,13 @@ class _IconTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = active ? Colors.white : const Color(0xFF7A7A7A);
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
+    final c = active
+        ? (isLight ? theme.colorScheme.primary : Colors.white)
+        : (isLight
+              ? theme.colorScheme.onSurface.withOpacity(0.5)
+              : const Color(0xFF7A7A7A));
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
@@ -605,7 +705,9 @@ class _IconTab extends StatelessWidget {
               height: 2,
               width: 28,
               decoration: BoxDecoration(
-                color: active ? const Color(0xFFC74B6C) : Colors.transparent,
+                color: active
+                    ? theme.colorScheme.primary
+                    : Colors.transparent,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -628,6 +730,8 @@ class _MediaGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final theme = Theme.of(context);
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -643,7 +747,7 @@ class _MediaGrid extends StatelessWidget {
         return ClipRRect(
           borderRadius: BorderRadius.circular(6),
           child: Material(
-            color: const Color(0xFF151515),
+            color: isLight ? theme.colorScheme.surface : const Color(0xFF151515),
             child: InkWell(
               onTap: () => onOpen(items, i),
               child: FutureBuilder<String>(
@@ -651,7 +755,11 @@ class _MediaGrid extends StatelessWidget {
                 builder: (context, snap) {
                   final resolved = snap.data;
                   if (resolved == null || resolved.isEmpty) {
-                    return const ColoredBox(color: Color(0xFF151515));
+                    return ColoredBox(
+                      color: isLight
+                          ? theme.colorScheme.surface
+                          : const Color(0xFF151515),
+                    );
                   }
                   if (m.messageType == MessageType.video) {
                     return Stack(
@@ -673,9 +781,17 @@ class _MediaGrid extends StatelessWidget {
                     fit: BoxFit.cover,
                     fadeInDuration: const Duration(milliseconds: 150),
                     placeholder: (context, _) =>
-                        const ColoredBox(color: Color(0xFF151515)),
+                        ColoredBox(
+                          color: isLight
+                              ? theme.colorScheme.surface
+                              : const Color(0xFF151515),
+                        ),
                     errorWidget: (context, _, __) =>
-                        const ColoredBox(color: Color(0xFF151515)),
+                        ColoredBox(
+                          color: isLight
+                              ? theme.colorScheme.surface
+                              : const Color(0xFF151515),
+                        ),
                   );
                 },
               ),
@@ -785,11 +901,19 @@ class _MediaViewerState extends State<_MediaViewer> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: isLight
+          ? theme.colorScheme.background
+          : Colors.black,
       appBar: AppBar(
-        backgroundColor: Colors.black,
-        iconTheme: const IconThemeData(color: Colors.white),
+        backgroundColor: isLight
+            ? theme.colorScheme.background
+            : Colors.black,
+        iconTheme: IconThemeData(
+          color: isLight ? theme.colorScheme.onBackground : Colors.white,
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.download_rounded),
@@ -882,6 +1006,8 @@ class _DocumentRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     final raw = message.mediaUrl ?? '';
     final name = raw.split('/').last;
     final ext = name.contains('.')
@@ -890,7 +1016,7 @@ class _DocumentRow extends StatelessWidget {
     final size = (message.mediaSize != null && message.mediaSize! > 0)
         ? _fmtSize(message.mediaSize!)
         : '';
-    final meta = size.isEmpty ? ext : '$ext • $size';
+    final meta = size.isEmpty ? ext : '$ext - $size';
     return SizedBox(
       height: 64,
       child: Row(
@@ -899,13 +1025,17 @@ class _DocumentRow extends StatelessWidget {
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: const Color(0xFF151515),
+              color: isLight
+                  ? theme.colorScheme.surface
+                  : const Color(0xFF151515),
               borderRadius: BorderRadius.circular(10),
             ),
             alignment: Alignment.center,
-            child: const Icon(
+            child: Icon(
               Icons.description_outlined,
-              color: Colors.white,
+              color: isLight
+                  ? theme.colorScheme.onSurface.withOpacity(0.7)
+                  : Colors.white,
               size: 18,
             ),
           ),
@@ -919,8 +1049,8 @@ class _DocumentRow extends StatelessWidget {
                   name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurface,
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
                   ),
@@ -930,8 +1060,8 @@ class _DocumentRow extends StatelessWidget {
                   meta,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF9A9A9A),
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurface.withOpacity(0.6),
                     fontSize: 12,
                   ),
                 ),
@@ -946,7 +1076,12 @@ class _DocumentRow extends StatelessWidget {
                 mode: LaunchMode.externalApplication,
               );
             },
-            icon: const Icon(Icons.download_rounded, color: Colors.white),
+            icon: Icon(
+              Icons.download_rounded,
+              color: isLight
+                  ? theme.colorScheme.primary
+                  : Colors.white,
+            ),
           ),
         ],
       ),
@@ -968,6 +1103,8 @@ class _LinkCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     final uri = Uri.tryParse(urlText);
     final domain = uri?.host.isNotEmpty == true ? uri!.host : urlText;
     return InkWell(
@@ -980,8 +1117,13 @@ class _LinkCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFF111111),
+          color: isLight ? theme.colorScheme.surface : const Color(0xFF111111),
           borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isLight
+                ? Colors.black.withOpacity(0.05)
+                : Colors.transparent,
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -990,8 +1132,8 @@ class _LinkCard extends StatelessWidget {
               urlText,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface,
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
               ),
@@ -1001,7 +1143,10 @@ class _LinkCard extends StatelessWidget {
               domain,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFF9A9A9A), fontSize: 12),
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.6),
+                fontSize: 12,
+              ),
             ),
           ],
         ),
@@ -1017,11 +1162,18 @@ class _VoiceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF111111),
+        color: isLight ? theme.colorScheme.surface : const Color(0xFF111111),
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isLight
+              ? Colors.black.withOpacity(0.05)
+              : Colors.transparent,
+        ),
       ),
       child: Row(
         children: [
@@ -1029,7 +1181,7 @@ class _VoiceCard extends StatelessWidget {
             width: 32,
             height: 32,
             decoration: const BoxDecoration(
-              color: Color(0xFFC74B6C),
+              color: Color(0xFF5865F2),
               shape: BoxShape.circle,
             ),
             child: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
@@ -1069,7 +1221,11 @@ class _SettingsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = danger ? const Color(0xFFE24C4C) : Colors.white;
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
+    final c = danger
+        ? Colors.redAccent
+        : (isLight ? theme.colorScheme.onSurface : Colors.white);
     return InkWell(
       onTap: onTap,
       child: SizedBox(
@@ -1105,13 +1261,16 @@ class _BubbleSizeSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return SliderTheme(
       data: SliderTheme.of(context).copyWith(
         trackHeight: 4,
-        activeTrackColor: const Color(0xFFC74B6C),
-        inactiveTrackColor: const Color(0xFF1E1E1E),
-        thumbColor: const Color(0xFFC74B6C),
-        overlayColor: const Color(0xFFC74B6C).withValues(alpha: 0.12),
+        activeTrackColor: theme.colorScheme.primary,
+        inactiveTrackColor: Theme.of(context).brightness == Brightness.light
+            ? theme.colorScheme.onSurface.withOpacity(0.2)
+            : const Color(0xFF1E1E1E),
+        thumbColor: theme.colorScheme.primary,
+        overlayColor: theme.colorScheme.primary.withValues(alpha: 0.12),
       ),
       child: Slider(
         min: 1.0,
@@ -1130,12 +1289,16 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 26),
       child: Center(
         child: Text(
           text,
-          style: const TextStyle(color: Color(0xFF9A9A9A), fontSize: 13),
+          style: TextStyle(
+            color: theme.colorScheme.onBackground.withOpacity(0.6),
+            fontSize: 13,
+          ),
         ),
       ),
     );
@@ -1198,3 +1361,5 @@ class _TabSkeleton extends StatelessWidget {
     );
   }
 }
+
+

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../theme/theme.dart';
 
 const Color kAccentBlue = Color(0xFF00AFFF);
 
@@ -23,12 +22,30 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     return Container(
       padding: padding,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(radius),
-        color: AppColors.card,
-        border: Border.all(color: AppColors.outline, width: 1),
+        color: isDark
+            ? Colors.white.withOpacity(0.05)
+            : theme.colorScheme.surface,
+        border: Border.all(
+          color: isDark
+              ? theme.dividerColor
+              : Colors.black.withOpacity(0.05),
+          width: 1,
+        ),
+        boxShadow: isDark
+            ? const []
+            : [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 10,
+                  offset: Offset(0, 4),
+                ),
+              ],
       ),
       child: child,
     );
@@ -62,9 +79,12 @@ class _BlueButtonState extends State<BlueButton> {
 
   @override
   Widget build(BuildContext context) {
-    final fg = widget.filled ? Colors.black : AppColors.highlight;
-    final border = widget.filled ? Colors.transparent : AppColors.outlineStrong;
-    final bg = widget.filled ? AppColors.highlight : Colors.transparent;
+    final theme = Theme.of(context);
+    final fg = widget.filled
+        ? theme.colorScheme.onPrimary
+        : theme.colorScheme.onSurface;
+    final border = widget.filled ? Colors.transparent : theme.dividerColor;
+    final bg = widget.filled ? theme.colorScheme.primary : Colors.transparent;
 
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
@@ -84,12 +104,12 @@ class _BlueButtonState extends State<BlueButton> {
           ),
           alignment: Alignment.center,
           child: widget.loading
-              ? const SizedBox(
+              ? SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.black,
+                    color: theme.colorScheme.onPrimary,
                   ),
                 )
               : Row(

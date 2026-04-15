@@ -1,10 +1,11 @@
-import 'package:firebase_auth/firebase_auth.dart';
+﻿import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/message_model.dart';
 import '../../providers/chat_providers.dart';
 import '../../providers/user_providers.dart';
+import '../../theme/theme.dart';
 
 class ForwardSelectScreen extends ConsumerStatefulWidget {
   final MessageModel source;
@@ -29,14 +30,19 @@ class _ForwardSelectScreenState extends ConsumerState<ForwardSelectScreen> {
   Widget build(BuildContext context) {
     final chats = ref.watch(chatListProvider);
     final q = _search.text.trim().toLowerCase();
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF000000),
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF000000),
+        backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
-        title: const Text('Forward to', style: TextStyle(color: Colors.white)),
-        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(
+          'Forward to',
+          style: TextStyle(color: theme.textTheme.bodyLarge?.color),
+        ),
+        iconTheme: IconThemeData(color: theme.textTheme.bodyLarge?.color),
         actions: [
           TextButton(
             onPressed: _selected.isEmpty
@@ -67,7 +73,7 @@ class _ForwardSelectScreenState extends ConsumerState<ForwardSelectScreen> {
               style: TextStyle(
                 color: _selected.isEmpty
                     ? const Color(0xFF666666)
-                    : const Color(0xFFC74B6C),
+                    : const Color(0xFF5865F2),
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -82,19 +88,27 @@ class _ForwardSelectScreenState extends ConsumerState<ForwardSelectScreen> {
             child: TextField(
               controller: _search,
               onChanged: (_) => setState(() {}),
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: theme.textTheme.bodyLarge?.color),
               decoration: InputDecoration(
                 hintText: 'Search chats',
                 hintStyle: const TextStyle(color: Color(0xFF8A8A8A)),
                 filled: true,
-                fillColor: const Color(0xFF0F0F0F),
+                fillColor: isDark ? AppColors.darkSurface : AppColors.lightSurface,
                 prefixIcon: const Icon(
                   Icons.search_rounded,
                   color: Color(0xFF8A8A8A),
                 ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(18),
-                  borderSide: BorderSide.none,
+                  borderSide: BorderSide(color: theme.dividerColor),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: BorderSide(color: theme.dividerColor),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
                 ),
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -200,7 +214,7 @@ class _ForwardSelectScreenState extends ConsumerState<ForwardSelectScreen> {
                             }
                           });
                         },
-                        activeColor: const Color(0xFFC74B6C),
+                        activeColor: const Color(0xFF5865F2),
                         checkColor: Colors.black,
                         side: const BorderSide(color: Color(0xFF444444)),
                       ),
@@ -228,3 +242,4 @@ class _ForwardSelectScreenState extends ConsumerState<ForwardSelectScreen> {
     return peer.isEmpty ? 'Chat' : peer;
   }
 }
+

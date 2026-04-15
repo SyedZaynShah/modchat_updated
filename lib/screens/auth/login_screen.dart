@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_providers.dart';
 import '../../theme/theme.dart';
@@ -48,31 +49,37 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _login() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() => _loading = true);
+    setState(() => _error = null);
+
     try {
-      await ref
-          .read(firebaseAuthServiceProvider)
-          .signIn(_email.text.trim(), _password.text);
-    } catch (e) {
-      setState(() {
-        _error = e.toString();
-      });
+      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: _email.text.trim(),
+        password: _password.text.trim(),
+      );
+
+      await cred.user?.reload();
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/home');
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.message ?? 'Login failed');
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'Something went wrong');
     } finally {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-        });
-      }
+      if (mounted) setState(() => _loading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: theme.colorScheme.background,
       body: Stack(
         children: [
           AnimatedOpacity(
@@ -101,10 +108,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             children: [
                               Text(
                                 'Hey, Welcome Back',
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 22,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.highlight,
+                                  fontWeight: FontWeight.w700,
+                                  color: theme.colorScheme.onBackground,
                                   height: 1.1,
                                 ),
                               ),
@@ -113,7 +120,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 'Sign in to continue.',
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: AppColors.textSecondary,
+                                  color: theme.colorScheme.onBackground
+                                      .withOpacity(0.6),
                                   height: 1.35,
                                 ),
                               ),
@@ -143,7 +151,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   'Forgot password?',
                                   style: TextStyle(
                                     fontSize: 12.5,
-                                    color: AppColors.textSecondary,
+                                    color: theme.colorScheme.primary,
                                   ),
                                 ),
                               ),
@@ -152,7 +160,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 Text(
                                   _error!,
                                   style: const TextStyle(
-                                    color: AppColors.textSecondary,
+                                    color: Colors.redAccent,
                                     fontSize: 12.5,
                                   ),
                                 ),
@@ -169,7 +177,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   Expanded(
                                     child: Divider(
                                       height: 1,
-                                      color: AppColors.outline,
+                                      color: isLight
+                                          ? Colors.black.withOpacity(0.05)
+                                          : AppColors.outline,
                                     ),
                                   ),
                                   Padding(
@@ -179,7 +189,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     child: Text(
                                       'or continue with',
                                       style: TextStyle(
-                                        color: AppColors.textSecondary,
+                                        color: theme.colorScheme.onBackground
+                                            .withOpacity(0.5),
                                         fontSize: 12.5,
                                       ),
                                     ),
@@ -187,7 +198,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   Expanded(
                                     child: Divider(
                                       height: 1,
-                                      color: AppColors.outline,
+                                      color: isLight
+                                          ? Colors.black.withOpacity(0.05)
+                                          : AppColors.outline,
                                     ),
                                   ),
                                 ],
@@ -214,10 +227,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             Text(
               "Don’t have an account? ",
               style: TextStyle(
-                color: AppColors.textSecondary.withOpacity(0.92),
+                color: theme.colorScheme.onBackground.withOpacity(0.6),
               ),
             ),
             TextButton(
+              style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.primary,
+              ),
               onPressed: () =>
                   Navigator.pushNamed(context, SignUpScreen.routeName),
               child: const Text('Sign up'),
@@ -242,6 +258,8 @@ class _GoogleButtonState extends State<_GoogleButton> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
       onTapCancel: () => setState(() => _pressed = false),
@@ -255,8 +273,13 @@ class _GoogleButtonState extends State<_GoogleButton> {
           height: 44,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: AppColors.outlineStrong, width: 1),
-            color: Colors.transparent,
+            border: Border.all(
+              color: isLight
+                  ? Colors.black.withOpacity(0.05)
+                  : AppColors.outlineStrong,
+              width: 1,
+            ),
+            color: isLight ? theme.colorScheme.surface : Colors.transparent,
           ),
           alignment: Alignment.center,
           child: Row(
@@ -265,17 +288,17 @@ class _GoogleButtonState extends State<_GoogleButton> {
               Container(
                 height: 18,
                 width: 18,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white,
+                  color: theme.colorScheme.surface,
                 ),
                 alignment: Alignment.center,
-                child: const Text(
+                child: Text(
                   'G',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: Colors.black,
+                    color: theme.colorScheme.onSurface,
                   ),
                 ),
               ),
@@ -283,7 +306,7 @@ class _GoogleButtonState extends State<_GoogleButton> {
               Text(
                 'Continue with Google',
                 style: TextStyle(
-                  color: AppColors.highlight,
+                  color: theme.colorScheme.onSurface,
                   fontWeight: FontWeight.w500,
                   fontSize: 14,
                 ),
@@ -316,6 +339,8 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDisabled = widget.onPressed == null;
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
       onTapCancel: () => setState(() => _pressed = false),
@@ -328,25 +353,27 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
         child: Container(
           height: 44,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: isDisabled
+                ? theme.colorScheme.onSurface.withOpacity(0.2)
+                : theme.colorScheme.primary,
             borderRadius: BorderRadius.circular(22),
           ),
           alignment: Alignment.center,
           child: widget.loading
-              ? const SizedBox(
+              ? SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(
+                  child: const CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.black,
+                    color: Colors.white,
                   ),
                 )
               : Text(
                   widget.label,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: Colors.black,
+                    color: Colors.white,
                   ),
                 ),
         ),

@@ -84,8 +84,10 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: theme.colorScheme.background,
       body: Stack(
         children: [
           Positioned(
@@ -98,13 +100,20 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: AppColors.card,
+                    color: isLight ? theme.colorScheme.surface : AppColors.card,
                     shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.outline, width: 1),
+                    border: Border.all(
+                      color: isLight
+                          ? Colors.black.withOpacity(0.05)
+                          : AppColors.outline,
+                      width: 1,
+                    ),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.arrow_back,
-                    color: AppColors.iconMuted,
+                    color: isLight
+                        ? theme.colorScheme.onSurface.withOpacity(0.7)
+                        : AppColors.iconMuted,
                     size: 18,
                   ),
                 ),
@@ -124,26 +133,28 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
                     children: [
                       Icon(
                         Icons.mark_email_read,
-                        color: AppColors.iconMuted.withOpacity(0.95),
+                        color: theme.colorScheme.primary,
                         size: 56,
                       ),
                       const SizedBox(height: 12),
-                      const Text(
+                      Text(
                         'Account Verification',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 18,
-                          color: AppColors.highlight,
+                          color: theme.colorScheme.onBackground,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 10),
-                      const Text(
+                      Text(
                         'We sent a verification link to your email. This helps protect your account and confirms it belongs to you. Open the email, verify, then return here to continue.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 13.5,
-                          color: AppColors.textSecondary,
+                          color: theme.colorScheme.onBackground.withOpacity(
+                            0.6,
+                          ),
                           fontWeight: FontWeight.w400,
                         ),
                       ),
@@ -153,7 +164,9 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
                           _msg!,
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: AppColors.textSecondary,
+                            color: _msg!.toLowerCase().contains('sent')
+                                ? Colors.green
+                                : Colors.redAccent,
                             height: 1.3,
                           ),
                         ),
@@ -173,15 +186,13 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
                                 width: 18,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: AppColors.highlight,
+                                  color: Colors.white,
                                 ),
                               )
                             : Text(
                                 'Resend email',
                                 style: TextStyle(
-                                  color: AppColors.textSecondary.withOpacity(
-                                    0.92,
-                                  ),
+                                  color: theme.colorScheme.primary,
                                 ),
                               ),
                       ),
@@ -189,11 +200,17 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Text(
+                          Text(
                             'Already have an account? ',
-                            style: TextStyle(color: AppColors.textSecondary),
+                            style: TextStyle(
+                              color: theme.colorScheme.onBackground
+                                  .withOpacity(0.6),
+                            ),
                           ),
                           TextButton(
+                            style: TextButton.styleFrom(
+                              foregroundColor: theme.colorScheme.primary,
+                            ),
                             onPressed: () => Navigator.pop(context),
                             child: const Text('Login'),
                           ),
@@ -231,6 +248,8 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDisabled = widget.onPressed == null;
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
       onTapCancel: () => setState(() => _pressed = false),
@@ -243,26 +262,28 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
         child: Container(
           height: 44,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: isDisabled
+                ? theme.colorScheme.onSurface.withOpacity(0.2)
+                : theme.colorScheme.primary,
             borderRadius: BorderRadius.circular(22),
           ),
           alignment: Alignment.center,
           child: widget.loading
-              ? const SizedBox(
+              ? SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(
+                  child: const CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.black,
+                    color: Colors.white,
                   ),
                 )
               : Text(
                   widget.label,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: Colors.black,
+                    color: Colors.white,
                   ),
                 ),
         ),

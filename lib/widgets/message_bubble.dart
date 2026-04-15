@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/message_model.dart';
 import '../providers/user_providers.dart';
+import '../theme/theme.dart';
 import 'file_preview_widget.dart';
 
 class MessageBubble extends StatefulWidget {
@@ -29,28 +30,47 @@ class _MessageBubbleState extends State<MessageBubble>
   Widget build(BuildContext context) {
     super.build(context);
 
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final primaryText = isDark
+        ? AppColors.textDarkPrimary
+        : AppColors.textLightPrimary;
+    final secondaryText = isDark
+        ? AppColors.textDarkSecondary
+        : AppColors.textLightSecondary;
+    final timeText = isDark ? AppColors.textDarkSecondary : AppColors.timeTextLight;
     final maxWidth = MediaQuery.of(context).size.width * 0.7;
-    final sentColor = const Color(0xFF7A1F3D);
-    final receivedColor = const Color(0xFF0F0F0F);
+    final sentColor = isDark
+        ? AppColors.primary.withOpacity(0.2)
+        : AppColors.outgoingBubbleLight;
+    final receivedColor = isDark
+        ? AppColors.darkCard
+        : AppColors.incomingBubbleLight;
+    final incomingBorder = isDark ? AppColors.darkBorder : AppColors.bubbleBorderLight;
 
-    Widget bubble = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: widget.isMe ? sentColor : receivedColor,
-        borderRadius: BorderRadius.circular(22),
-        border: !widget.isMe
-            ? Border.all(color: const Color(0xFF1A1A1A), width: 1)
-            : null,
-      ),
-      child: _content(context),
-    );
-
-    if (widget.message.messageType != MessageType.text) {
-      bubble = ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: _content(context),
-      );
-    }
+    final bubble = widget.message.messageType == MessageType.text
+        ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: widget.isMe ? sentColor : receivedColor,
+              borderRadius: BorderRadius.circular(16),
+              border: !widget.isMe
+                  ? Border.all(color: incomingBorder, width: 1)
+                  : null,
+            ),
+            child: _content(
+              context,
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+              timeText: timeText,
+            ),
+          )
+        : _content(
+            context,
+            primaryText: primaryText,
+            secondaryText: secondaryText,
+            timeText: timeText,
+          );
 
     return Row(
       mainAxisAlignment: widget.isMe
@@ -75,28 +95,33 @@ class _MessageBubbleState extends State<MessageBubble>
     );
   }
 
-  Widget _content(BuildContext context) {
+  Widget _content(
+    BuildContext context, {
+    required Color primaryText,
+    required Color secondaryText,
+    required Color timeText,
+  }) {
     final message = widget.message;
     if (message.isDeletedForAll) {
-      return const Text(
+      return Text(
         'This message was deleted',
         style: TextStyle(
           fontSize: 14,
-          color: Colors.white54,
+          color: secondaryText,
           fontStyle: FontStyle.italic,
         ),
       );
     }
 
     final forwardedTag = (message.forwarded)
-        ? const Padding(
-            padding: EdgeInsets.only(bottom: 4),
+        ? Padding(
+            padding: const EdgeInsets.only(bottom: 4),
             child: Text(
               'Forwarded',
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
-                color: Colors.white70,
+                color: secondaryText,
                 height: 1.1,
               ),
             ),
@@ -112,10 +137,10 @@ class _MessageBubbleState extends State<MessageBubble>
             forwardedTag,
             Text(
               message.text ?? '',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 height: 1.35,
-                color: Colors.white,
+                color: primaryText,
               ),
             ),
             const SizedBox(height: 4),
@@ -124,9 +149,9 @@ class _MessageBubbleState extends State<MessageBubble>
               children: [
                 Text(
                   _formatTime(),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 10,
-                    color: Color(0xFF9A9A9A),
+                    color: timeText,
                   ),
                 ),
                 if (widget.isMe) ...[
@@ -134,6 +159,7 @@ class _MessageBubbleState extends State<MessageBubble>
                   _StatusIcon(
                     status: message.status,
                     isPending: message.hasPendingWrites,
+                    timeText: timeText,
                   ),
                 ],
               ],
@@ -155,8 +181,23 @@ class _MessageBubbleState extends State<MessageBubble>
             ),
           ],
         );
-      case MessageType.file:
       case MessageType.audio:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            forwardedTag,
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceVariant,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: FilePreviewWidget(message: message, isMe: widget.isMe),
+            ),
+          ],
+        );
+      case MessageType.file:
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -191,7 +232,13 @@ class _BubbleAvatar extends ConsumerWidget {
             ? NetworkImage(u!.profileImageUrl!)
             : null,
         child: u?.profileImageUrl == null
-            ? const Icon(Icons.person, size: 14, color: Colors.white54)
+            ? Icon(
+                Icons.person,
+                size: 14,
+                color: Theme.of(
+                  context,
+                ).iconTheme.color?.withOpacity(0.6),
+              )
             : null,
       ),
       loading: () =>
@@ -205,22 +252,27 @@ class _BubbleAvatar extends ConsumerWidget {
 class _StatusIcon extends StatelessWidget {
   final int status;
   final bool isPending;
-  const _StatusIcon({required this.status, required this.isPending});
+  final Color timeText;
+  const _StatusIcon({
+    required this.status,
+    required this.isPending,
+    required this.timeText,
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (isPending)
+    if (isPending) {
       return const Icon(
         Icons.watch_later_outlined,
         size: 11,
-        color: Color(0xFF9A9A9A),
+        color: Color(0xFF94A3B8),
       );
+    }
 
-    final color = status == 3
-        ? const Color(0xFFC74B6C)
-        : const Color(0xFF9A9A9A);
+    final color = status == 3 ? AppColors.primary : timeText;
     final icon = status >= 2 ? Icons.done_all_rounded : Icons.done_rounded;
 
     return Icon(icon, size: 11, color: color);
   }
 }
+

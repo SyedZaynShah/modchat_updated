@@ -20,6 +20,7 @@ class ChatService {
   Future<String> startOrOpenChat(String peerId) async {
     final me = _auth.currentUser!.uid;
     final members = [me, peerId]..sort();
+    final now = FieldValue.serverTimestamp();
     // Try to find existing chat with exact members match
     final existing = await _fs.dmChats
         .where('members', isEqualTo: members)
@@ -34,11 +35,19 @@ class ChatService {
       'id': chatId,
       'type': 'dm',
       'members': members,
-      'createdAt': FieldValue.serverTimestamp(),
-      'lastActivityAt': FieldValue.serverTimestamp(),
+      'lastRead': {
+        me: now,
+        peerId: now,
+      },
+      'typing': {
+        me: {'active': false, 'type': null, 'timestamp': now},
+        peerId: {'active': false, 'type': null, 'timestamp': now},
+      },
+      'createdAt': now,
+      'lastActivityAt': now,
       'lastMessage': null,
       'lastMessageType': null,
-      'lastTimestamp': FieldValue.serverTimestamp(),
+      'lastTimestamp': now,
     }, SetOptions(merge: true));
     return chatId;
   }
@@ -76,6 +85,13 @@ class ChatService {
         'createdAt': now,
         'state': 'active',
         'members': members,
+        'lastRead': {
+          for (final uid in members) uid: now,
+        },
+        'typing': {
+          for (final uid in members)
+            uid: {'active': false, 'type': null, 'timestamp': now},
+        },
         'memberCount': members.length,
         'settings': {
           'threadsEnabled': true,
@@ -179,9 +195,9 @@ class ChatService {
             if (a.isSeen != b.isSeen) return false;
             if (a.edited != b.edited) return false;
             if (a.isDeletedForAll != b.isDeletedForAll) return false;
-            if ('${a.text}' != '${b.text}') return false;
-            if ('${a.mediaUrl}' != '${b.mediaUrl}') return false;
-            if ('${a.reactions}' != '${b.reactions}') return false;
+            if (a.text != b.text) return false;
+            if (a.mediaUrl != b.mediaUrl) return false;
+            if (a.reactions != b.reactions) return false;
             if (a.hasPendingWrites != b.hasPendingWrites) return false;
           }
           return true;
@@ -207,37 +223,24 @@ class ChatService {
       if (isDeletedForAll) return;
 
       final raw =
-          (data['reactions'] as Map?)?.cast<String, dynamic>() ??
+          (data['userReactions'] as Map?)?.cast<String, dynamic>() ??
           <String, dynamic>{};
+      final userReactions = <String, String>{};
+      raw.forEach((k, v) {
+        final id = k.trim();
+        final em = v.toString().trim();
+        if (id.isEmpty || em.isEmpty) return;
+        userReactions[id] = em;
+      });
 
-      bool hadSameEmoji = false;
-      final keys = raw.keys.map((e) => '$e').toList();
-      for (final k in keys) {
-        final current = raw[k];
-        if (current is! List) continue;
-        final list = current.map((e) => '$e').toList();
-        if (k == emoji && list.contains(uid)) {
-          hadSameEmoji = true;
-        }
-        list.removeWhere((e) => e == uid);
-        if (list.isEmpty) {
-          raw.remove(k);
-        } else {
-          raw[k] = list;
-        }
+      final current = userReactions[uid];
+      if (current == emoji) {
+        userReactions.remove(uid);
+      } else {
+        userReactions[uid] = emoji;
       }
 
-      if (!hadSameEmoji) {
-        final current = raw[emoji];
-        final list = <String>[];
-        if (current is List) {
-          list.addAll(current.map((e) => '$e'));
-        }
-        if (!list.contains(uid)) list.add(uid);
-        raw[emoji] = list;
-      }
-
-      tx.update(ref, {'reactions': raw});
+      tx.set(ref, {'userReactions': userReactions}, SetOptions(merge: true));
     });
   }
 
@@ -263,8 +266,7 @@ class ChatService {
       } else {
         final roleRef = chatRef.collection('members').doc(uid);
         final roleSnap = await tx.get(roleRef);
-        final role =
-            (roleSnap.data() as Map<String, dynamic>?)?['role'] as String?;
+        final role = roleSnap.data()?['role'] as String?;
         final isAdmin = role == 'owner' || role == 'admin';
         if (!isAdmin) {
           final msgRef = _fs.messages(chatId).doc(messageId);
@@ -422,6 +424,8 @@ class ChatService {
     required String fileName,
     required String contentType,
     required MessageType type,
+    String? localPath,
+    String? thumbnailPath,
     int? audioDurationMs,
     Map<String, dynamic>? replyTo,
   }) async {
@@ -443,7 +447,10 @@ class ChatService {
       'senderId': uid,
       'receiverId': peerId,
       'text': null,
-      'mediaUrl': path,
+      'mediaUrl': null,
+      'storagePath': path,
+      if (localPath != null) 'localPath': localPath,
+      if (thumbnailPath != null) 'thumbnailUrl': thumbnailPath,
       'fileName': ext.isNotEmpty ? '$ts.$ext' : '$ts',
       'mediaType': mediaType,
       'mediaSize': bytes.length,
@@ -470,22 +477,27 @@ class ChatService {
 
     // Retry upload once on transient SocketException
     Future<void> doUpload() async {
-      await _storage.uploadBytes(
+      final res = await _storage.uploadBytes(
         data: bytes,
         bucket: bucket,
         path: path,
         contentType: contentType,
       );
+
+      await msgRef.set({
+        'mediaUrl': res.publicUrl,
+        'uploadStatus': 'done',
+        'localPath': FieldValue.delete(),
+        'thumbnailUrl': FieldValue.delete(),
+      }, SetOptions(merge: true));
     }
 
     try {
       await doUpload();
-      await msgRef.set({'uploadStatus': 'done'}, SetOptions(merge: true));
     } on SocketException {
       try {
         await Future.delayed(const Duration(milliseconds: 400));
         await doUpload();
-        await msgRef.set({'uploadStatus': 'done'}, SetOptions(merge: true));
       } catch (e) {
         await msgRef.set({'uploadStatus': 'failed'}, SetOptions(merge: true));
         rethrow;
@@ -539,6 +551,8 @@ class ChatService {
     required String fileName,
     required String contentType,
     required MessageType type,
+    String? localPath,
+    String? thumbnailPath,
     int? audioDurationMs,
     Map<String, dynamic>? replyTo,
   }) async {
@@ -561,7 +575,10 @@ class ChatService {
       'senderId': uid,
       'receiverId': '',
       'text': null,
-      'mediaUrl': path,
+      'mediaUrl': null,
+      'storagePath': path,
+      if (localPath != null) 'localPath': localPath,
+      if (thumbnailPath != null) 'thumbnailUrl': thumbnailPath,
       'fileName': ext.isNotEmpty ? '$ts.$ext' : '$ts',
       'mediaType': mediaType,
       'mediaSize': bytes.length,
@@ -588,22 +605,27 @@ class ChatService {
     });
 
     Future<void> doUpload() async {
-      await _storage.uploadBytes(
+      final res = await _storage.uploadBytes(
         data: bytes,
         bucket: bucket,
         path: path,
         contentType: contentType,
       );
+
+      await msgRef.set({
+        'mediaUrl': res.publicUrl,
+        'uploadStatus': 'done',
+        'localPath': FieldValue.delete(),
+        'thumbnailUrl': FieldValue.delete(),
+      }, SetOptions(merge: true));
     }
 
     try {
       await doUpload();
-      await msgRef.set({'uploadStatus': 'done'}, SetOptions(merge: true));
     } on SocketException {
       try {
         await Future.delayed(const Duration(milliseconds: 400));
         await doUpload();
-        await msgRef.set({'uploadStatus': 'done'}, SetOptions(merge: true));
       } catch (e) {
         await msgRef.set({'uploadStatus': 'failed'}, SetOptions(merge: true));
         rethrow;
@@ -655,6 +677,21 @@ class ChatService {
         });
       }
       await batch.commit();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') return;
+      rethrow;
+    }
+  }
+
+  Future<void> updateLastRead(String chatId) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    try {
+      await _fs.dmChats.doc(chatId).set({
+        'lastRead': {
+          uid: FieldValue.serverTimestamp(),
+        },
+      }, SetOptions(merge: true));
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') return;
       rethrow;

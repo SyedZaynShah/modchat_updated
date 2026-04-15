@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class SwipeToReply extends StatefulWidget {
@@ -97,7 +97,7 @@ class _SwipeToReplyState extends State<SwipeToReply>
                     child: const Icon(
                       Icons.reply_rounded,
                       size: 20,
-                      color: Color(0xFFC74B6C),
+                      color: Color(0xFF5865F2),
                     ),
                   ),
                 ),
@@ -113,3 +113,4 @@ class _SwipeToReplyState extends State<SwipeToReply>
     );
   }
 }
+

@@ -146,9 +146,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final chatList = ref.watch(chatListProvider);
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: isLight
+          ? theme.colorScheme.background
+          : AppColors.background,
       body: SafeArea(
         child: PageView(
           controller: _pageController,
@@ -165,7 +169,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     onMenuSelected: _onMenuSelected,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: _SmartSearchBar(
@@ -226,19 +230,43 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               child: Text(
                                 'Pinned',
                                 style: TextStyle(
-                                  fontSize: 12,
-                                  color: AppColors.textTertiary,
+                                  fontSize: 13,
+                                  color: isLight
+                                      ? theme.colorScheme.onBackground
+                                            .withOpacity(0.7)
+                                      : AppColors.textTertiary,
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
                             ),
-                            _PinnedChatsRow(pinned: pinned, query: q),
+                            isLight
+                                ? Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: theme.colorScheme.surface,
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: theme.dividerColor.withOpacity(
+                                            0.1,
+                                          ),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: _PinnedChatsRow(
+                                        pinned: pinned,
+                                        query: q,
+                                      ),
+                                    ),
+                                  )
+                                : _PinnedChatsRow(pinned: pinned, query: q),
                             const SizedBox(height: 10),
-                            const Divider(
-                              height: 1,
-                              thickness: 1,
-                              color: AppColors.outline,
-                            ),
                           ],
                           ...rest.map((d) {
                             final data = d.data();
@@ -260,9 +288,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             final unread = (data['unreadCount'] as int?) ?? 0;
                             final ts = (data['lastTimestamp'] as Timestamp?)
                                 ?.toDate();
+                            final typingMap = Map<String, dynamic>.from(
+                              (data['typing'] as Map?) ?? const <String, dynamic>{},
+                            );
                             return _ChatListTile(
                               chatId: d.id,
                               peerId: peerId,
+                              myUid: me,
+                              typingMap: typingMap,
                               last: last,
                               lastType: lastType,
                               time: ts,
@@ -279,7 +312,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     error: (e, _) => Center(
                       child: Text(
                         'Error: $e',
-                        style: const TextStyle(color: AppColors.textSecondary),
+                        style: TextStyle(
+                          color: theme.colorScheme.onBackground.withOpacity(0.6),
+                        ),
                       ),
                     ),
                   ),
@@ -299,8 +334,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.highlight,
-        foregroundColor: Colors.black,
+        backgroundColor: isLight
+          ? theme.colorScheme.primary
+          : AppColors.highlight,
+        foregroundColor: isLight ? Colors.white : Colors.black,
+        elevation: isLight ? 3 : null,
+        shape: isLight
+          ? RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))
+          : null,
         child: const Icon(Icons.chat_bubble_outline),
         onPressed: () {
           Navigator.of(
@@ -360,6 +401,8 @@ extension on _HomeScreenState {
 class _ChatListTile extends ConsumerWidget {
   final String chatId;
   final String peerId;
+  final String myUid;
+  final Map<String, dynamic>? typingMap;
   final String? last;
   final String? lastType;
   final DateTime? time;
@@ -370,6 +413,8 @@ class _ChatListTile extends ConsumerWidget {
   const _ChatListTile({
     required this.chatId,
     required this.peerId,
+    required this.myUid,
+    this.typingMap,
     this.last,
     this.lastType,
     this.time,
@@ -382,6 +427,7 @@ class _ChatListTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final q = (query ?? '').trim().toLowerCase();
+    final typingState = getTypingState(typingMap, myUid);
 
     if (chatType == 'group') {
       final title = (groupName ?? '').trim().isNotEmpty ? groupName! : 'Group';
@@ -394,7 +440,11 @@ class _ChatListTile extends ConsumerWidget {
 
       return _ChatTile(
         title: title,
-        subtitle: _previewLabel(last: last, lastType: lastType),
+        subtitle: _subtitle(
+          typingState: typingState,
+          last: last,
+          lastType: lastType,
+        ),
         leading: _AvatarWithDot(
           avatar: CircleAvatar(
             radius: 20,
@@ -431,7 +481,11 @@ class _ChatListTile extends ConsumerWidget {
         final title = u?.name.isNotEmpty == true ? u!.name : peerId;
         return _ChatTile(
           title: title,
-          subtitle: _previewLabel(last: last, lastType: lastType),
+          subtitle: _subtitle(
+            typingState: typingState,
+            last: last,
+            lastType: lastType,
+          ),
           leading: _AvatarWithDot(
             avatar: _ResolvedAvatar(url: u?.profileImageUrl, radius: 20),
             showDot: _isFresh(time),
@@ -479,6 +533,73 @@ class _ChatListTile extends ConsumerWidget {
     }
     return _Preview(label: txt);
   }
+
+  Widget _subtitle({
+    required Map<String, dynamic>? typingState,
+    required String? last,
+    required String? lastType,
+  }) {
+    if (typingState != null) {
+      return _TypingPreview(
+        isTyping: typingState['isTyping'] == true,
+        isRecording: typingState['isRecording'] == true,
+      );
+    }
+    return _SubtitlePreview(preview: _previewLabel(last: last, lastType: lastType));
+  }
+}
+
+Map<String, dynamic>? getTypingState(
+  Map<String, dynamic>? typingMap,
+  String myUid,
+) {
+  if (typingMap == null || typingMap.isEmpty) return null;
+
+  Map<String, dynamic>? recordingCandidate;
+  final now = DateTime.now();
+  const staleAfter = Duration(seconds: 5);
+
+  for (final entry in typingMap.entries) {
+    final uid = entry.key;
+    if (uid == myUid) continue;
+
+    final raw = entry.value;
+    if (raw is! Map) continue;
+    final data = Map<String, dynamic>.from(raw as Map);
+
+    final active = (data['active'] as bool?) ?? false;
+    final type = ((data['type'] as String?) ?? '').trim().toLowerCase();
+    final isTyping =
+        (data['isTyping'] as bool?) ?? (active && type != 'voice');
+    final isRecording =
+        (data['isRecording'] as bool?) ?? (active && type == 'voice');
+
+    final tsRaw = data['updatedAt'] ?? data['timestamp'];
+    DateTime? ts;
+    if (tsRaw is Timestamp) ts = tsRaw.toDate();
+    if (tsRaw is DateTime) ts = tsRaw;
+    if (ts != null && now.difference(ts) > staleAfter) {
+      continue;
+    }
+
+    if (isTyping) {
+      return {
+        'uid': uid,
+        'isTyping': true,
+        'isRecording': false,
+      };
+    }
+
+    if (isRecording && recordingCandidate == null) {
+      recordingCandidate = {
+        'uid': uid,
+        'isTyping': false,
+        'isRecording': true,
+      };
+    }
+  }
+
+  return recordingCandidate;
 }
 
 class _Preview {
@@ -489,7 +610,7 @@ class _Preview {
 
 class _ChatTile extends StatelessWidget {
   final String title;
-  final _Preview subtitle;
+  final Widget subtitle;
   final Widget leading;
   final Widget trailing;
   final VoidCallback onTap;
@@ -504,45 +625,105 @@ class _ChatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
+    if (!isLight) {
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          splashColor: AppColors.highlight.withValues(alpha: 0.04),
+          highlightColor: const Color(0xFF101010),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 64),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  leading,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.highlight,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        subtitle,
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  trailing,
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         splashColor: AppColors.highlight.withValues(alpha: 0.04),
-        highlightColor: const Color(0xFF101010),
-        child: SizedBox(
-          height: 64,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              children: [
-                leading,
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.highlight,
-                        ),
+        highlightColor: Colors.transparent,
+        child: Column(
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 68),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    leading,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.onBackground,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          subtitle,
+                        ],
                       ),
-                      const SizedBox(height: 4),
-                      _SubtitlePreview(preview: subtitle),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 10),
+                    trailing,
+                  ],
                 ),
-                const SizedBox(width: 10),
-                trailing,
-              ],
+              ),
             ),
-          ),
+            Divider(
+              height: 0.5,
+              thickness: 0.5,
+              color: Colors.black.withOpacity(0.05),
+            ),
+          ],
         ),
       ),
     );
@@ -555,27 +736,130 @@ class _SubtitlePreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final darkColor = AppColors.iconMuted;
+    final color = Theme.of(context).colorScheme.onBackground.withOpacity(0.6);
     if (preview.icon == null) {
       return Text(
         preview.label,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 13, color: AppColors.iconMuted),
+        style: TextStyle(fontSize: 13, color: isLight ? color : darkColor),
       );
     }
     return Row(
       children: [
-        Icon(preview.icon, size: 14, color: AppColors.iconMuted),
+        Icon(preview.icon, size: 14, color: isLight ? color : darkColor),
         const SizedBox(width: 6),
         Expanded(
           child: Text(
             preview.label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, color: AppColors.iconMuted),
+            style: TextStyle(fontSize: 13, color: isLight ? color : darkColor),
           ),
         ),
       ],
+    );
+  }
+}
+
+class _TypingPreview extends StatelessWidget {
+  final bool isTyping;
+  final bool isRecording;
+
+  const _TypingPreview({required this.isTyping, required this.isRecording});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final color = isDark ? Colors.blueAccent : Colors.blue;
+    final showTyping = isTyping;
+
+    return Row(
+      children: [
+        if (showTyping)
+          _TypingDots(color: color)
+        else if (isRecording)
+          Icon(Icons.mic, size: 14, color: color),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            showTyping ? 'typing...' : 'recording...',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontStyle: FontStyle.italic,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TypingDots extends StatefulWidget {
+  final Color color;
+
+  const _TypingDots({required this.color});
+
+  @override
+  State<_TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<_TypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (_, __) {
+        final t = _controller.value;
+        final op1 = (t < 0.33) ? 1.0 : 0.3;
+        final op2 = (t >= 0.33 && t < 0.66) ? 1.0 : 0.3;
+        final op3 = (t >= 0.66) ? 1.0 : 0.3;
+
+        return Row(
+          children: [
+            _dot(op1),
+            const SizedBox(width: 2),
+            _dot(op2),
+            const SizedBox(width: 2),
+            _dot(op3),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _dot(double opacity) {
+    return Opacity(
+      opacity: opacity,
+      child: Container(
+        width: 4,
+        height: 4,
+        decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+      ),
     );
   }
 }
@@ -587,22 +871,27 @@ class _TrailingMeta extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
       children: [
         if (time != null)
           Text(
             _formatTime(time!),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
-              color: Color(0xFF7A7A7A),
+              color: isLight
+                  ? theme.colorScheme.onBackground.withOpacity(0.5)
+                  : const Color(0xFF7A7A7A),
               fontWeight: FontWeight.w500,
             ),
           )
         else
-          const SizedBox(height: 14),
-        const SizedBox(height: 6),
+          const SizedBox.shrink(),
+        if (time != null && unreadCount > 0) const SizedBox(height: 6),
         if (unreadCount > 0)
           Container(
             constraints: const BoxConstraints(minWidth: 20),
@@ -610,20 +899,18 @@ class _TrailingMeta extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 6),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: AppColors.accent,
+              color: isLight ? theme.colorScheme.primary : AppColors.accent,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Text(
               unreadCount > 99 ? '99+' : unreadCount.toString(),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
-                color: AppColors.highlight,
+                color: isLight ? Colors.white : AppColors.highlight,
                 fontWeight: FontWeight.w600,
               ),
             ),
-          )
-        else
-          const SizedBox(height: 20),
+          ),
       ],
     );
   }
@@ -673,15 +960,19 @@ class _HomeHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Row(
       children: [
-        const Expanded(
+        Expanded(
           child: Text(
             'ModChat',
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w600,
-              color: AppColors.highlight,
+              color: isLight
+                  ? theme.colorScheme.onBackground
+                  : AppColors.highlight,
               letterSpacing: 0.3,
             ),
           ),
@@ -718,9 +1009,11 @@ class _HomeHeader extends StatelessWidget {
             ),
           ],
           onSelected: onMenuSelected,
-          child: const Icon(
+          child: Icon(
             Icons.more_vert,
-            color: AppColors.iconMuted,
+            color: isLight
+                ? theme.colorScheme.onBackground
+                : AppColors.iconMuted,
             size: 20,
           ),
         ),
@@ -736,12 +1029,18 @@ class _HeaderIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return InkResponse(
       onTap: onTap,
       radius: 22,
       splashColor: AppColors.highlight.withValues(alpha: 0.06),
       highlightColor: AppColors.highlight.withValues(alpha: 0.04),
-      child: Icon(icon, color: AppColors.iconMuted, size: 20),
+      child: Icon(
+        icon,
+        color: isLight ? theme.colorScheme.onBackground : AppColors.iconMuted,
+        size: 20,
+      ),
     );
   }
 }
@@ -779,23 +1078,88 @@ class _SmartSearchBarState extends State<_SmartSearchBar> {
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    if (!isLight) {
+      final focused = widget.focusNode.hasFocus;
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        height: 40,
+        decoration: BoxDecoration(
+          color: AppColors.input,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: focused
+                ? AppColors.outlineStrong
+                : const Color(0xFF1A1A1A),
+            width: 1,
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Row(
+          children: [
+            const Icon(Icons.search, size: 18, color: Color(0xFF8A8A8A)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: widget.controller,
+                focusNode: widget.focusNode,
+                onChanged: widget.onChanged,
+                textAlignVertical: TextAlignVertical.center,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: AppColors.highlight,
+                  height: 1.2,
+                ),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  disabledBorder: InputBorder.none,
+                  hintText: 'Search conversations',
+                  hintStyle: TextStyle(color: Color(0xFF7A7A7A), fontSize: 14),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final focused = widget.focusNode.hasFocus;
+    final theme = Theme.of(context);
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       curve: Curves.easeOut,
-      height: 40,
+      height: 44,
       decoration: BoxDecoration(
-        color: AppColors.input,
-        borderRadius: BorderRadius.circular(20),
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: focused ? AppColors.outlineStrong : const Color(0xFF1A1A1A),
+          color: focused
+              ? theme.colorScheme.primary.withOpacity(0.3)
+              : Colors.black.withOpacity(0.05),
           width: 1,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Row(
         children: [
-          const Icon(Icons.search, size: 18, color: Color(0xFF8A8A8A)),
+          Icon(
+            Icons.search,
+            size: 18,
+            color: theme.colorScheme.onSurface.withOpacity(0.55),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
@@ -803,20 +1167,23 @@ class _SmartSearchBarState extends State<_SmartSearchBar> {
               focusNode: widget.focusNode,
               onChanged: widget.onChanged,
               textAlignVertical: TextAlignVertical.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w400,
-                color: AppColors.highlight,
+                color: theme.colorScheme.onSurface,
                 height: 1.2,
               ),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
                 disabledBorder: InputBorder.none,
-                hintText: 'Search conversations',
-                hintStyle: TextStyle(color: Color(0xFF7A7A7A), fontSize: 14),
+                hintText: 'Search chats...',
+                hintStyle: TextStyle(
+                  color: theme.colorScheme.onSurface.withOpacity(0.5),
+                  fontSize: 14,
+                ),
                 contentPadding: EdgeInsets.zero,
               ),
             ),
@@ -841,46 +1208,75 @@ class _QuickActionsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 36,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        children: [
-          _ActionCapsule(
-            icon: Icons.chat_bubble_outline,
-            label: 'New Chat',
-            onTap: onNewChat,
-          ),
-          const SizedBox(width: 8),
-          _ActionCapsule(
-            icon: Icons.group_add_outlined,
-            label: 'New Group',
-            onTap: onNewGroup,
-          ),
-          const SizedBox(width: 8),
-          _ActionCapsule(
-            icon: Icons.camera_alt_outlined,
-            label: 'Camera',
-            onTap: onCamera,
-          ),
-          const SizedBox(width: 8),
-          _ActionCapsule(
-            icon: Icons.bookmark_border,
-            label: 'Saved',
-            onTap: onSaved,
-          ),
-        ],
-      ),
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    if (!isLight) {
+      return SizedBox(
+        height: 36,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          children: [
+            _DarkActionCapsule(
+              icon: Icons.chat_bubble_outline,
+              label: 'New Chat',
+              onTap: onNewChat,
+            ),
+            const SizedBox(width: 8),
+            _DarkActionCapsule(
+              icon: Icons.group_add_outlined,
+              label: 'New Group',
+              onTap: onNewGroup,
+            ),
+            const SizedBox(width: 8),
+            _DarkActionCapsule(
+              icon: Icons.camera_alt_outlined,
+              label: 'Camera',
+              onTap: onCamera,
+            ),
+            const SizedBox(width: 8),
+            _DarkActionCapsule(
+              icon: Icons.bookmark_border,
+              label: 'Saved',
+              onTap: onSaved,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        _ActionCapsule(
+          icon: Icons.chat_bubble_outline,
+          label: 'New Chat',
+          onTap: onNewChat,
+        ),
+        _ActionCapsule(
+          icon: Icons.group_add_outlined,
+          label: 'New Group',
+          onTap: onNewGroup,
+        ),
+        _ActionCapsule(
+          icon: Icons.camera_alt_outlined,
+          label: 'Camera',
+          onTap: onCamera,
+        ),
+        _ActionCapsule(
+          icon: Icons.bookmark_border,
+          label: 'Saved',
+          onTap: onSaved,
+        ),
+      ],
     );
   }
 }
 
-class _ActionCapsule extends StatelessWidget {
+class _DarkActionCapsule extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  const _ActionCapsule({
+  const _DarkActionCapsule({
     required this.icon,
     required this.label,
     required this.onTap,
@@ -923,6 +1319,77 @@ class _ActionCapsule extends StatelessWidget {
   }
 }
 
+class _ActionCapsule extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  const _ActionCapsule({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  State<_ActionCapsule> createState() => _ActionCapsuleState();
+}
+
+class _ActionCapsuleState extends State<_ActionCapsule> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? 0.95 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: SizedBox(
+          width: 74,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: theme.dividerColor.withOpacity(0.1),
+                    width: 1,
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  widget.icon,
+                  size: 20,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                widget.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: theme.colorScheme.onBackground.withOpacity(0.75),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PinnedChatsRow extends ConsumerWidget {
   final List<QueryDocumentSnapshot<Map<String, dynamic>>> pinned;
   final String query;
@@ -933,7 +1400,7 @@ class _PinnedChatsRow extends ConsumerWidget {
     return SizedBox(
       height: 74,
       child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         itemBuilder: (context, index) {
@@ -965,7 +1432,7 @@ class _PinnedChatsRow extends ConsumerWidget {
               avatar: const CircleAvatar(
                 radius: 18,
                 backgroundColor: Color(0xFF1A1A1A),
-                child: Icon(Icons.group, size: 18, color: AppColors.white),
+                child: Icon(Icons.group, size: 18, color: Colors.white),
               ),
               onTap: () => Navigator.pushNamed(
                 context,
@@ -1003,7 +1470,7 @@ class _PinnedChatsRow extends ConsumerWidget {
               avatar: const CircleAvatar(
                 radius: 18,
                 backgroundColor: Color(0xFF1A1A1A),
-                child: Icon(Icons.person, size: 18, color: AppColors.white),
+                child: Icon(Icons.person, size: 18, color: Colors.white),
               ),
               onTap: () => Navigator.pushNamed(
                 context,
@@ -1028,6 +1495,8 @@ class _PinnedChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -1044,9 +1513,11 @@ class _PinnedChip extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
-                  color: Color(0xFF7A7A7A),
+                  color: isLight
+                      ? theme.colorScheme.onBackground.withOpacity(0.6)
+                      : const Color(0xFF7A7A7A),
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -1063,11 +1534,15 @@ class _ChatListSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
     return ListView.separated(
       padding: const EdgeInsets.only(top: 6, bottom: 88),
       itemCount: 10,
-      separatorBuilder: (_, __) =>
-          const Divider(height: 1, thickness: 1, color: AppColors.outline),
+      separatorBuilder: (_, __) => Divider(
+        height: 0.5,
+        thickness: 0.5,
+        color: isLight ? Colors.grey.shade300 : AppColors.outline,
+      ),
       itemBuilder: (context, index) {
         return SizedBox(
           height: 64,
@@ -1117,11 +1592,12 @@ class _SkeletonBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
     return Container(
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: AppColors.iconContainer,
+        color: isLight ? Colors.grey.shade200 : AppColors.iconContainer,
         borderRadius: BorderRadius.circular(999),
       ),
     );
@@ -1133,11 +1609,12 @@ class _SkeletonBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
     return Container(
       width: 20,
       height: 20,
       decoration: BoxDecoration(
-        color: AppColors.iconContainer,
+        color: isLight ? Colors.grey.shade300 : AppColors.iconContainer,
         borderRadius: BorderRadius.circular(10),
       ),
     );
@@ -1149,6 +1626,8 @@ class _EmptyChatsState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 36),
@@ -1161,11 +1640,13 @@ class _EmptyChatsState extends StatelessWidget {
               color: AppColors.iconMuted,
             ),
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'No conversations yet',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: AppColors.highlight,
+                color: isLight
+                    ? theme.colorScheme.onBackground.withOpacity(0.6)
+                    : AppColors.highlight,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),

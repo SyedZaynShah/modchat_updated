@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../theme/theme.dart';
 import 'login_screen.dart';
 import 'signup_screen.dart';
 
@@ -24,9 +23,10 @@ class _LandingScreenState extends State<LandingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final textTheme = Theme.of(context).textTheme;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: theme.scaffoldBackgroundColor,
       body: SafeArea(
         child: AnimatedOpacity(
           opacity: _anim ? 1 : 0,
@@ -67,7 +67,7 @@ class _LandingScreenState extends State<LandingScreen> {
                     style: TextStyle(
                       fontSize: 14,
                       height: 1.35,
-                      color: AppColors.textSecondary,
+                      color: textTheme.bodyMedium?.color,
                       fontWeight: FontWeight.w400,
                     ),
                   ),
@@ -124,7 +124,7 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
           height: 44,
           width: double.infinity,
           decoration: BoxDecoration(
-            color: AppColors.highlight,
+            color: Theme.of(context).colorScheme.primary,
             borderRadius: BorderRadius.circular(22),
           ),
           alignment: Alignment.center,
@@ -133,7 +133,7 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
             style: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: Colors.black,
+              color: Colors.white,
             ),
           ),
         ),

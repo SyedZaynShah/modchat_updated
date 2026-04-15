@@ -126,18 +126,17 @@ class _MinimalAsyncMediaState extends State<MinimalAsyncMedia> {
               return _buildPlaceholder();
             },
             loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
               return Container(
                 decoration: BoxDecoration(
                   color: widget.isMe ? AppColors.navy : AppColors.surface,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Center(
-                  child:
-                      child ??
-                      const CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
+                child: const Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
                 ),
               );
             },

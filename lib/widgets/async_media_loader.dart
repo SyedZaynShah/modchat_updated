@@ -147,20 +147,17 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
           return widget.placeholder;
         },
         loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
           return Container(
             decoration: BoxDecoration(
               color: widget.isMe ? AppColors.navy : AppColors.surface,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Center(
-              child:
-                  child ??
-                  const CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      AppColors.highlight,
-                    ),
-                  ),
+            child: const Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(AppColors.highlight),
+              ),
             ),
           );
         },
@@ -192,7 +189,7 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
             if (_isLoading)
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.7),
+                  color: Colors.black.withValues(alpha: 0.7),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Center(

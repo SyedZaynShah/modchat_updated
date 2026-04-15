@@ -1,6 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:app_links/app_links.dart';
 
 import 'theme/theme.dart';
 import 'screens/auth/login_screen.dart';
@@ -14,17 +16,76 @@ import 'screens/group/create_group_screen.dart';
 import 'screens/chat/group_chat_detail_screen.dart';
 import 'screens/group/group_settings_screen.dart';
 import 'screens/group/group_permissions_screen.dart';
+import 'screens/group/join_group_screen.dart';
 import 'ui/splash/splash_screen.dart';
 
-class App extends ConsumerWidget {
+final GlobalKey<NavigatorState> _navKey = GlobalKey<NavigatorState>();
+
+class App extends ConsumerStatefulWidget {
   const App({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<App> createState() => _AppState();
+}
+
+class _AppState extends ConsumerState<App> {
+  StreamSubscription? _sub;
+  final _appLinks = AppLinks();
+
+  @override
+  void initState() {
+    super.initState();
+    _initDeepLinks();
+  }
+
+  Future<void> _initDeepLinks() async {
+    try {
+      final initial = await _appLinks.getInitialLink();
+      if (initial != null) {
+        _handleIncomingUri(initial);
+      }
+    } catch (_) {}
+
+    _sub = _appLinks.uriLinkStream.listen((uri) {
+      _handleIncomingUri(uri);
+    }, onError: (_) {});
+  }
+
+  void _handleIncomingUri(Uri uri) {
+    try {
+      final segs = uri.pathSegments;
+      if (segs.length >= 2 && segs[0] == 'join') {
+        final code = segs[1].trim();
+        if (code.isEmpty) return;
+
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _navKey.currentState?.pushNamed(
+            JoinGroupScreen.routeName,
+            arguments: {'inviteCode': code},
+          );
+        });
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final themeMode = ref.watch(themeModeProvider);
+
     return MaterialApp(
       title: 'ModChat',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.theme,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: themeMode,
+      themeAnimationDuration: const Duration(milliseconds: 250),
+      navigatorKey: _navKey,
       home: const ModChatSplashScreen(),
       routes: {
         "/home": (context) => const AuthGate(),
@@ -48,6 +109,14 @@ class App extends ConsumerWidget {
           return MaterialPageRoute(
             builder: (_) =>
                 GroupChatDetailScreen(chatId: args['chatId'] as String),
+          );
+        }
+        if (settings.name == JoinGroupScreen.routeName) {
+          final args =
+              (settings.arguments as Map<String, dynamic>?) ?? const {};
+          final code = (args['inviteCode'] as String?)?.trim();
+          return MaterialPageRoute(
+            builder: (_) => JoinGroupScreen(inviteCode: code),
           );
         }
         if (settings.name == GroupSettingsScreen.routeName) {
@@ -95,7 +164,7 @@ class AuthGate extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.userChanges(),
+      stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Scaffold(

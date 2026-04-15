@@ -29,24 +29,39 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
   @override
   Widget build(BuildContext context) {
     final chatList = ref.watch(chatListProvider);
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: isLight
+          ? theme.colorScheme.background
+          : AppColors.background,
       appBar: AppBar(
+        backgroundColor: isLight
+            ? theme.colorScheme.background
+            : null,
+        elevation: 0,
         centerTitle: false,
         automaticallyImplyLeading: false,
         titleSpacing: 0,
         title: Row(
           children: [
             IconButton(
-              icon: const Icon(Icons.arrow_back, color: AppColors.navy),
+              icon: Icon(
+                Icons.arrow_back,
+                color: isLight
+                    ? theme.colorScheme.onBackground
+                    : AppColors.navy,
+              ),
               onPressed: () => Navigator.pop(context),
             ),
             const SizedBox(width: 4),
-            const Text(
+            Text(
               'New Chat',
               style: TextStyle(
-                color: AppColors.navy,
-                fontWeight: FontWeight.w800,
+                color: isLight
+                    ? theme.colorScheme.onBackground
+                    : AppColors.navy,
+                fontWeight: FontWeight.w600,
                 fontSize: 20,
               ),
             ),
@@ -105,13 +120,10 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: FractionallySizedBox(
                         widthFactor: 0.68,
-                        child: Container(
-                          height: 0.75,
-                          margin: const EdgeInsets.symmetric(vertical: 6),
-                          decoration: BoxDecoration(
-                            color: AppColors.sinopia.withOpacity(0.28),
-                            borderRadius: BorderRadius.circular(1),
-                          ),
+                        child: Divider(
+                          height: 12,
+                          thickness: 0.5,
+                          color: Colors.black.withOpacity(0.05),
                         ),
                       ),
                     ),
@@ -145,7 +157,11 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
               error: (e, _) => Center(
                 child: Text(
                   'Error: $e',
-                  style: const TextStyle(color: Colors.black),
+                  style: TextStyle(
+                    color: isLight
+                        ? theme.colorScheme.onBackground
+                        : Colors.black,
+                  ),
                 ),
               ),
             ),
@@ -163,18 +179,22 @@ class _ToSearchBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        color: isLight ? theme.colorScheme.surface : Colors.white,
+        borderRadius: BorderRadius.circular(14),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: Row(
         children: [
-          const Text(
+          Text(
             'To:',
             style: TextStyle(
-              color: Colors.black,
+              color: isLight
+                  ? theme.colorScheme.onSurface
+                  : Colors.black,
               fontWeight: FontWeight.w800,
               fontSize: 14,
             ),
@@ -185,15 +205,36 @@ class _ToSearchBar extends StatelessWidget {
               controller: controller,
               onChanged: onChanged,
               textAlignVertical: TextAlignVertical.center,
-              style: const TextStyle(color: Colors.black),
+              style: TextStyle(
+                color: isLight
+                    ? theme.colorScheme.onSurface
+                    : Colors.black,
+              ),
               decoration: InputDecoration(
                 isDense: true,
-                border: InputBorder.none,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
                 filled: true,
-                fillColor: Colors.transparent,
+                fillColor: isLight
+                    ? theme.colorScheme.surface
+                    : Colors.transparent,
                 hintText: 'Search name or email',
-                hintStyle: const TextStyle(color: Colors.black),
+                hintStyle: TextStyle(
+                  color: isLight
+                      ? theme.colorScheme.onSurface.withOpacity(0.5)
+                      : Colors.black,
+                ),
               ),
             ),
           ),
@@ -221,6 +262,8 @@ class _ChatRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     if (chatType == 'group') {
       final title = (groupName ?? '').trim().isNotEmpty ? groupName! : 'Group';
       final q = query.trim().toLowerCase();
@@ -250,9 +293,11 @@ class _ChatRow extends ConsumerWidget {
             ),
             title: Text(
               title,
-              style: const TextStyle(
-                color: AppColors.navy,
-                fontWeight: FontWeight.w800,
+              style: TextStyle(
+                color: isLight
+                    ? theme.colorScheme.onBackground
+                    : AppColors.navy,
+                fontWeight: FontWeight.w600,
                 fontSize: 13.5,
               ),
             ),
@@ -260,10 +305,20 @@ class _ChatRow extends ConsumerWidget {
               last ?? '',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isLight
+                    ? theme.colorScheme.onBackground.withOpacity(0.6)
+                    : null,
+              ),
             ),
             leading: CircleAvatar(
               backgroundColor: AppColors.sinopia.withOpacity(0.25),
-              child: const Icon(Icons.group, color: AppColors.navy),
+              child: Icon(
+                Icons.group,
+                color: isLight
+                    ? theme.colorScheme.onBackground
+                    : AppColors.navy,
+              ),
             ),
           ),
         ),
@@ -305,9 +360,11 @@ class _ChatRow extends ConsumerWidget {
               ),
               title: Text(
                 u?.name.isNotEmpty == true ? u!.name : peerId,
-                style: const TextStyle(
-                  color: AppColors.navy,
-                  fontWeight: FontWeight.w800,
+                style: TextStyle(
+                  color: isLight
+                      ? theme.colorScheme.onBackground
+                      : AppColors.navy,
+                  fontWeight: FontWeight.w600,
                   fontSize: 13.5,
                 ),
               ),
@@ -315,6 +372,11 @@ class _ChatRow extends ConsumerWidget {
                 last ?? '',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isLight
+                      ? theme.colorScheme.onBackground.withOpacity(0.6)
+                      : null,
+                ),
               ),
               leading: CircleAvatar(
                 backgroundColor: AppColors.sinopia.withOpacity(0.25),
@@ -326,7 +388,12 @@ class _ChatRow extends ConsumerWidget {
                     : null,
                 child: (u?.profileImageUrl?.isNotEmpty == true)
                     ? null
-                    : const Icon(Icons.person, color: Colors.white70),
+                    : Icon(
+                        Icons.person,
+                        color: isLight
+                            ? theme.colorScheme.onSurface.withOpacity(0.7)
+                            : Colors.white70,
+                      ),
               ),
             ),
           ),
@@ -351,6 +418,8 @@ class _OptionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -366,13 +435,20 @@ class _OptionRow extends StatelessWidget {
           ),
           leading: CircleAvatar(
             backgroundColor: AppColors.sinopia.withOpacity(0.25),
-            child: Icon(icon, color: AppColors.navy),
+            child: Icon(
+              icon,
+              color: isLight
+                  ? theme.colorScheme.onBackground
+                  : AppColors.navy,
+            ),
           ),
           title: Text(
             label,
-            style: const TextStyle(
-              color: AppColors.navy,
-              fontWeight: FontWeight.w800,
+            style: TextStyle(
+              color: isLight
+                  ? theme.colorScheme.onBackground
+                  : AppColors.navy,
+              fontWeight: FontWeight.w600,
               fontSize: 13.5,
             ),
           ),

@@ -85,9 +85,11 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Scaffold(
       extendBody: true,
-      backgroundColor: AppColors.background,
+      backgroundColor: theme.colorScheme.background,
       body: Stack(
         children: [
           AnimatedOpacity(
@@ -116,10 +118,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                             children: [
                               Text(
                                 "Let’s get started",
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 22,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.highlight,
+                                  fontWeight: FontWeight.w700,
+                                  color: theme.colorScheme.onBackground,
                                   height: 1.1,
                                 ),
                               ),
@@ -128,7 +130,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                 'Create your account to continue.',
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: AppColors.textSecondary,
+                                  color: theme.colorScheme.onBackground
+                                      .withOpacity(0.6),
                                   height: 1.35,
                                 ),
                               ),
@@ -171,7 +174,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                 Text(
                                   _error!,
                                   style: const TextStyle(
-                                    color: AppColors.textSecondary,
+                                    color: Colors.redAccent,
                                     fontSize: 12.5,
                                   ),
                                 ),
@@ -189,7 +192,9 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                   Expanded(
                                     child: Divider(
                                       height: 1,
-                                      color: AppColors.outline,
+                                      color: isLight
+                                          ? Colors.black.withOpacity(0.05)
+                                          : AppColors.outline,
                                     ),
                                   ),
                                   Padding(
@@ -199,7 +204,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                     child: Text(
                                       'or continue with',
                                       style: TextStyle(
-                                        color: AppColors.textSecondary,
+                                        color: theme.colorScheme.onBackground
+                                            .withOpacity(0.5),
                                         fontSize: 12.5,
                                       ),
                                     ),
@@ -207,7 +213,9 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                                   Expanded(
                                     child: Divider(
                                       height: 1,
-                                      color: AppColors.outline,
+                                      color: isLight
+                                          ? Colors.black.withOpacity(0.05)
+                                          : AppColors.outline,
                                     ),
                                   ),
                                 ],
@@ -238,7 +246,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
             ),
             TextButton(
               style: TextButton.styleFrom(
-                foregroundColor: AppColors.highlight,
+                foregroundColor: theme.colorScheme.primary,
                 backgroundColor: Colors.transparent,
               ),
               onPressed: () => Navigator.pop(context),
@@ -264,6 +272,8 @@ class _GoogleButtonState extends State<_GoogleButton> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
       onTapCancel: () => setState(() => _pressed = false),
@@ -277,8 +287,13 @@ class _GoogleButtonState extends State<_GoogleButton> {
           height: 44,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: AppColors.outlineStrong, width: 1),
-            color: Colors.transparent,
+            border: Border.all(
+              color: isLight
+                  ? Colors.black.withOpacity(0.05)
+                  : AppColors.outlineStrong,
+              width: 1,
+            ),
+            color: isLight ? theme.colorScheme.surface : Colors.transparent,
           ),
           alignment: Alignment.center,
           child: Row(
@@ -287,17 +302,17 @@ class _GoogleButtonState extends State<_GoogleButton> {
               Container(
                 height: 18,
                 width: 18,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white,
+                  color: theme.colorScheme.surface,
                 ),
                 alignment: Alignment.center,
-                child: const Text(
+                child: Text(
                   'G',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: Colors.black,
+                    color: theme.colorScheme.onSurface,
                   ),
                 ),
               ),
@@ -305,7 +320,7 @@ class _GoogleButtonState extends State<_GoogleButton> {
               Text(
                 'Continue with Google',
                 style: TextStyle(
-                  color: AppColors.highlight,
+                  color: theme.colorScheme.onSurface,
                   fontWeight: FontWeight.w500,
                   fontSize: 14,
                 ),
@@ -340,6 +355,8 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDisabled = widget.onPressed == null;
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
       onTapCancel: () => setState(() => _pressed = false),
@@ -352,32 +369,38 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
         child: Container(
           height: 44,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: isDisabled
+                ? theme.colorScheme.onSurface.withOpacity(0.2)
+                : theme.colorScheme.primary,
             borderRadius: BorderRadius.circular(22),
           ),
           alignment: Alignment.center,
           child: widget.loading
-              ? const SizedBox(
+              ? SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(
+                  child: const CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.black,
+                    color: Colors.white,
                   ),
                 )
               : Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (widget.icon != null) ...[
-                      Icon(widget.icon, size: 18, color: Colors.black),
+                      Icon(
+                        widget.icon,
+                        size: 18,
+                        color: Colors.white,
+                      ),
                       const SizedBox(width: 8),
                     ],
                     Text(
                       widget.label,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
-                        color: Colors.black,
+                        color: Colors.white,
                       ),
                     ),
                   ],

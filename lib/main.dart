@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'firebase_options.dart';
 import 'app.dart';
 import 'services/firestore_service.dart';
+import 'theme/theme_provider.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,6 +38,16 @@ Future<void> main() async {
         fb_auth.Persistence.LOCAL,
       );
     } catch (_) {}
+
+    try {
+      FirebaseFirestore.instance.settings = const Settings(
+        persistenceEnabled: false,
+      );
+    } catch (_) {}
+
+    try {
+      await FirestoreService.resetPersistenceAndNetwork();
+    } catch (_) {}
   }
 
   // Initialize Supabase for storage usage
@@ -47,12 +60,26 @@ Future<void> main() async {
     await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
   }
 
-  runApp(const _AuthDrivenProviderScope(child: App()));
+  final prefs = await SharedPreferences.getInstance();
+  final initialThemeMode = themeModeFromPrefsString(
+    prefs.getString('themeMode'),
+  );
+
+  runApp(
+    _AuthDrivenProviderScope(
+      initialThemeMode: initialThemeMode,
+      child: const App(),
+    ),
+  );
 }
 
 class _AuthDrivenProviderScope extends StatefulWidget {
   final Widget child;
-  const _AuthDrivenProviderScope({required this.child});
+  final ThemeMode initialThemeMode;
+  const _AuthDrivenProviderScope({
+    required this.child,
+    required this.initialThemeMode,
+  });
 
   @override
   State<_AuthDrivenProviderScope> createState() =>
@@ -96,6 +123,11 @@ class _AuthDrivenProviderScopeState extends State<_AuthDrivenProviderScope> {
         // Recreate the ProviderContainer whenever auth identity changes.
         return ProviderScope(
           key: ValueKey(nextUid ?? 'signed_out'),
+          overrides: [
+            initialThemeModeProvider.overrideWithValue(
+              widget.initialThemeMode,
+            ),
+          ],
           child: widget.child,
         );
       },

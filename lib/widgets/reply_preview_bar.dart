@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/reply_target.dart';
 import '../providers/user_providers.dart';
@@ -21,6 +21,8 @@ class ReplyPreviewBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     final senderId = target.senderId;
 
     String senderLabelFallback() {
@@ -48,9 +50,12 @@ class ReplyPreviewBar extends ConsumerWidget {
       margin: const EdgeInsets.symmetric(horizontal: 12),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF111111),
+        color: isLight ? const Color(0xFFF3F4F6) : const Color(0xFF111111),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF1A1A1A), width: 1),
+        border: Border.all(
+          color: isLight ? const Color(0xFFD1D5DB) : const Color(0xFF1A1A1A),
+          width: 1,
+        ),
       ),
       child: Row(
         children: [
@@ -59,7 +64,7 @@ class ReplyPreviewBar extends ConsumerWidget {
             child: Container(
               width: 3,
               height: double.infinity,
-              color: const Color(0xFFC74B6C),
+              color: const Color(0xFF5865F2),
             ),
           ),
           const SizedBox(width: 10),
@@ -72,10 +77,12 @@ class ReplyPreviewBar extends ConsumerWidget {
                   senderLabel,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFFC74B6C),
+                    color: isLight
+                        ? const Color(0xFF111827)
+                        : const Color(0xFF5865F2),
                     height: 1.1,
                   ),
                 ),
@@ -84,9 +91,11 @@ class ReplyPreviewBar extends ConsumerWidget {
                   target.previewText,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: Color(0xFFA5A5A5),
+                    color: isLight
+                        ? const Color(0xFF4B5563)
+                        : const Color(0xFFA5A5A5),
                     height: 1.1,
                   ),
                 ),
@@ -96,14 +105,16 @@ class ReplyPreviewBar extends ConsumerWidget {
           GestureDetector(
             onTap: onCancel,
             behavior: HitTestBehavior.opaque,
-            child: const SizedBox(
+            child: SizedBox(
               width: 28,
               height: 28,
               child: Center(
                 child: Icon(
                   Icons.close_rounded,
                   size: 18,
-                  color: Color(0xFFA5A5A5),
+                  color: isLight
+                      ? Color(0xFF4B5563)
+                      : Color(0xFFA5A5A5),
                 ),
               ),
             ),
@@ -113,3 +124,4 @@ class ReplyPreviewBar extends ConsumerWidget {
     );
   }
 }
+

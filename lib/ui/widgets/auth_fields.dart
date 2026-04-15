@@ -48,6 +48,8 @@ class _CustomFieldState extends State<CustomField> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     return Focus(
       focusNode: _focus,
       child: AnimatedContainer(
@@ -55,10 +57,14 @@ class _CustomFieldState extends State<CustomField> {
         curve: Curves.easeOutCubic,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
-          color: AppColors.input,
+          color: isLight ? theme.colorScheme.surface : AppColors.input,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: _focus.hasFocus ? AppColors.highlight : AppColors.outline,
+            color: isLight
+                ? (_focus.hasFocus
+                      ? theme.colorScheme.primary
+                      : Colors.transparent)
+                : (_focus.hasFocus ? AppColors.highlight : AppColors.outline),
             width: 1,
           ),
         ),
@@ -74,10 +80,10 @@ class _CustomFieldState extends State<CustomField> {
               textAlignVertical: TextAlignVertical.center,
               obscureText: _obscure,
               strutStyle: const StrutStyle(height: 1.0, forceStrutHeight: true),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14.0,
                 height: 1.0,
-                color: AppColors.highlight,
+                color: isLight ? theme.colorScheme.onSurface : AppColors.highlight,
                 fontWeight: FontWeight.w400,
               ),
               decoration: InputDecoration(
@@ -90,15 +96,21 @@ class _CustomFieldState extends State<CustomField> {
                 hintText: widget.hint ?? widget.label,
                 hintStyle: TextStyle(
                   fontSize: 13,
-                  color: AppColors.textSecondary,
+                  color: isLight
+                      ? theme.colorScheme.onSurface.withOpacity(0.5)
+                      : AppColors.textSecondary,
                 ),
                 prefixIcon: widget.prefixIcon != null
                     ? Icon(
                         widget.prefixIcon,
                         size: 18,
-                        color: _focus.hasFocus
-                            ? AppColors.highlight
-                            : AppColors.iconMuted,
+                        color: isLight
+                            ? (_focus.hasFocus
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurface.withOpacity(0.7))
+                            : (_focus.hasFocus
+                                  ? AppColors.highlight
+                                  : AppColors.iconMuted),
                       )
                     : null,
                 prefixIconConstraints: const BoxConstraints(
@@ -117,9 +129,15 @@ class _CustomFieldState extends State<CustomField> {
                               ? Icons.visibility_off_outlined
                               : Icons.visibility_outlined,
                           size: 18,
-                          color: _focus.hasFocus
-                              ? AppColors.highlight
-                              : AppColors.iconMuted,
+                            color: isLight
+                              ? (_focus.hasFocus
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurface.withOpacity(
+                                  0.7,
+                                  ))
+                              : (_focus.hasFocus
+                                ? AppColors.highlight
+                                : AppColors.iconMuted),
                         ),
                         onPressed: () => setState(() => _obscure = !_obscure),
                       )

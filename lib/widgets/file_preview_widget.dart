@@ -1,12 +1,12 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:io';
 import 'package:video_player/video_player.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:math' as math;
 import '../models/message_model.dart';
 import '../services/supabase_service.dart';
@@ -37,12 +37,12 @@ class _AudioPendingInline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = isMe ? const Color(0xFF7A1F3D) : const Color(0xFF0F0F0F);
+    final bg = isMe ? const Color(0xFF4752C4) : const Color(0xFF0F0F0F);
     final border = isMe
         ? null
         : Border.all(color: const Color(0xFF1A1A1A), width: 1);
 
-    final label = status == 'failed' ? 'Failed to send' : 'Sending…';
+    final label = status == 'failed' ? 'Failed to send' : 'Sending...';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -76,7 +76,7 @@ class _AudioPendingInline extends StatelessWidget {
                 child: Container(
                   height: 6,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFC74B6C),
+                    color: const Color(0xFF5865F2),
                     borderRadius: BorderRadius.circular(6),
                   ),
                 ),
@@ -234,36 +234,78 @@ class _ImagePreviewState extends State<_ImagePreview> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_ready) {
-      final screenW = MediaQuery.of(context).size.width;
-      final maxBubbleW = screenW * 0.70;
-      return SizedBox(
-        width: maxBubbleW,
-        height: maxBubbleW * 0.72,
-        child: const _ShimmerBox(radius: 14),
-      );
-    }
+    final local = widget.message.localPath;
+    final uploading = widget.message.uploadStatus == 'uploading';
 
-    if (_resolved == null) {
-      final screenW = MediaQuery.of(context).size.width;
-      final maxBubbleW = screenW * 0.70;
-      return SizedBox(
-        width: maxBubbleW,
-        height: maxBubbleW * 0.72,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: _MediaErrorBox(icon: Icons.broken_image_outlined),
+    final maxW = MediaQuery.of(context).size.width * 0.65;
+    const minSize = 140.0;
+    const maxH = 280.0;
+
+    final ar = (_aspectRatio == null || _aspectRatio! <= 0)
+        ? 1.0
+        : _aspectRatio!.clamp(0.6, 1.4);
+
+    if (!_ready) {
+      return ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxW,
+          maxHeight: maxH,
+          minWidth: minSize,
+          minHeight: minSize,
+        ),
+        child: const ClipRRect(
+          borderRadius: BorderRadius.all(Radius.circular(14)),
+          child: _ShimmerBox(radius: 14),
         ),
       );
     }
 
-    final screenW = MediaQuery.of(context).size.width;
-    final maxBubbleW = screenW * 0.70;
-    final ar = (_aspectRatio == null || _aspectRatio! <= 0)
-        ? 1.0
-        : _aspectRatio!;
-    final targetW = maxBubbleW;
-    final targetH = (targetW / ar).clamp(160.0, 360.0);
+    if (_resolved == null) {
+      return ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxW,
+          maxHeight: maxH,
+          minWidth: minSize,
+          minHeight: minSize,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: AspectRatio(
+            aspectRatio: 1,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: (local != null && local.isNotEmpty)
+                  ? Stack(
+                      key: ValueKey('local_${widget.message.id}'),
+                      fit: StackFit.expand,
+                      children: [
+                        Image(
+                          image: FileImage(File(local)),
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                          errorBuilder: (_, __, ___) => const _MediaErrorBox(
+                            icon: Icons.broken_image_outlined,
+                          ),
+                        ),
+                        if (uploading)
+                          const Positioned(
+                            right: 8,
+                            top: 8,
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                      ],
+                    )
+                  : const _MediaErrorBox(icon: Icons.broken_image_outlined),
+            ),
+          ),
+        ),
+      );
+    }
 
     return GestureDetector(
       onTap: () {
@@ -303,41 +345,66 @@ class _ImagePreviewState extends State<_ImagePreview> {
           ),
         );
       },
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: SizedBox(
-          width: targetW,
-          height: targetH,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              CachedNetworkImage(
-                imageUrl: _resolved!,
-                fit: BoxFit.cover,
-                fadeInDuration: const Duration(milliseconds: 180),
-                placeholder: (context, _) => const _ShimmerBox(radius: 14),
-                errorWidget: (context, _, __) => ColoredBox(
-                  color: AppColors.highlight.withOpacity(0.65),
-                  child: const Center(
-                    child: Icon(
-                      Icons.broken_image_outlined,
-                      color: Colors.black54,
-                      size: 28,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxW,
+          maxHeight: maxH,
+          minWidth: minSize,
+          minHeight: minSize,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: AspectRatio(
+            aspectRatio: ar,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: (local != null && local.isNotEmpty && uploading)
+                      ? Image(
+                          key: ValueKey('local_${widget.message.id}'),
+                          image: FileImage(File(local)),
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                          errorBuilder: (_, __, ___) => const _MediaErrorBox(
+                            icon: Icons.broken_image_outlined,
+                          ),
+                        )
+                      : Image(
+                          key: ValueKey('network_${widget.message.id}'),
+                          image: NetworkImage(_resolved!),
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                          errorBuilder: (_, __, ___) => const _MediaErrorBox(
+                            icon: Icons.broken_image_outlined,
+                          ),
+                        ),
+                ),
+                if (uploading)
+                  const Positioned(
+                    right: 8,
+                    top: 8,
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   ),
+                Positioned(
+                  right: 6,
+                  bottom: 6,
+                  child: _MediaMetaOverlay(
+                    timestamp: widget.message.timestamp,
+                    isMe: widget.isMe,
+                    status: widget.message.status,
+                    isPending: widget.message.hasPendingWrites,
+                  ),
                 ),
-              ),
-              Positioned(
-                right: 6,
-                bottom: 6,
-                child: _MediaMetaOverlay(
-                  timestamp: widget.message.timestamp,
-                  isMe: widget.isMe,
-                  status: widget.message.status,
-                  isPending: widget.message.hasPendingWrites,
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -478,42 +545,205 @@ class _VideoPreviewState extends State<_VideoPreview> {
 
   @override
   Widget build(BuildContext context) {
+    final uploading = widget.message.uploadStatus == 'uploading';
+    final thumb = widget.message.thumbnailUrl;
+
+    final maxW = MediaQuery.of(context).size.width * 0.65;
+    const minSize = 140.0;
+    const maxH = 280.0;
+    const aspect = 16 / 9;
+
     return FutureBuilder<String>(
       future: _resolvedFuture,
       builder: (context, snap) {
+        if ((widget.message.mediaUrl ?? '').isEmpty &&
+            thumb != null &&
+            thumb.isNotEmpty) {
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: maxW,
+              maxHeight: maxH,
+              minWidth: minSize,
+              minHeight: minSize,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: AspectRatio(
+                aspectRatio: aspect,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image(
+                      image: FileImage(File(thumb)),
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: double.infinity,
+                      errorBuilder: (_, __, ___) => ColoredBox(
+                        color: AppColors.highlight.withOpacity(0.65),
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+                    const Center(
+                      child: Icon(
+                        Icons.play_circle_fill_rounded,
+                        size: 44,
+                        color: Colors.white,
+                      ),
+                    ),
+                    if (uploading)
+                      const Positioned(
+                        right: 8,
+                        top: 8,
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    Positioned(
+                      right: 6,
+                      bottom: 6,
+                      child: _MediaMetaOverlay(
+                        timestamp: widget.message.timestamp,
+                        isMe: widget.isMe,
+                        status: widget.message.status,
+                        isPending: widget.message.hasPendingWrites,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
         if (snap.connectionState != ConnectionState.done) {
-          final screenW = MediaQuery.of(context).size.width;
-          final maxBubbleW = screenW * 0.70;
-          return SizedBox(
-            width: maxBubbleW,
-            height: maxBubbleW * 0.62,
-            child: const _ShimmerBox(radius: 14),
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: maxW,
+              maxHeight: maxH,
+              minWidth: minSize,
+              minHeight: minSize,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: AspectRatio(
+                aspectRatio: aspect,
+                child: const _ShimmerBox(radius: 14),
+              ),
+            ),
           );
         }
 
         if (snap.hasError || snap.data == null || (snap.data ?? '').isEmpty) {
-          final screenW = MediaQuery.of(context).size.width;
-          final maxBubbleW = screenW * 0.70;
-          final targetW = maxBubbleW;
-          final targetH = (targetW / (16 / 9)).clamp(160.0, 360.0);
-          return SizedBox(
-            width: targetW,
-            height: targetH,
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: maxW,
+              maxHeight: maxH,
+              minWidth: minSize,
+              minHeight: minSize,
+            ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(14),
+              child: AspectRatio(
+                aspectRatio: aspect,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const _ShimmerBox(radius: 14),
+                    const Center(
+                      child: Icon(
+                        Icons.play_circle_fill_rounded,
+                        size: 44,
+                        color: Colors.white,
+                      ),
+                    ),
+                    Positioned(
+                      right: 6,
+                      bottom: 6,
+                      child: _MediaMetaOverlay(
+                        timestamp: widget.message.timestamp,
+                        isMe: widget.isMe,
+                        status: widget.message.status,
+                        isPending: widget.message.hasPendingWrites,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        final resolved = snap.data;
+
+        if (resolved != null && resolved.isNotEmpty) {
+          // Initialize controller to show first frame as a thumbnail.
+          unawaited(_ensureController(resolved));
+        }
+
+        // Duration badge requires duration metadata; keep null for now.
+        final String? durationLabel = null;
+
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: maxW,
+            maxHeight: maxH,
+            minWidth: minSize,
+            minHeight: minSize,
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: AspectRatio(
+              aspectRatio: aspect,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  const _ShimmerBox(radius: 14),
-                  Positioned(
-                    left: 8,
-                    top: 8,
-                    child: const Icon(
-                      Icons.play_arrow_rounded,
-                      size: 18,
+                  if (resolved == null)
+                    const _ShimmerBox(radius: 14)
+                  else if (_controller != null &&
+                      _controller!.value.isInitialized)
+                    FittedBox(
+                      fit: BoxFit.cover,
+                      clipBehavior: Clip.hardEdge,
+                      child: SizedBox(
+                        width: _controller!.value.size.width,
+                        height: _controller!.value.size.height,
+                        child: VideoPlayer(_controller!),
+                      ),
+                    )
+                  else
+                    ColoredBox(
+                      color: AppColors.highlight.withOpacity(0.65),
+                      child: const SizedBox.expand(),
+                    ),
+                  const Center(
+                    child: Icon(
+                      Icons.play_circle_fill_rounded,
+                      size: 44,
                       color: Colors.white,
                     ),
                   ),
+                  if (durationLabel != null)
+                    Positioned(
+                      right: 8,
+                      bottom: 8,
+                      child: Text(
+                        durationLabel,
+                        style: const TextStyle(
+                          color: Color(0xFFFFFFFF),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          shadows: [
+                            Shadow(
+                              offset: Offset(0, 1),
+                              blurRadius: 2,
+                              color: Colors.black54,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   Positioned(
                     right: 6,
                     bottom: 6,
@@ -524,108 +754,24 @@ class _VideoPreviewState extends State<_VideoPreview> {
                       isPending: widget.message.hasPendingWrites,
                     ),
                   ),
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => _VideoFullscreen(
+                              url: widget.message.mediaUrl ?? '',
+                              type: widget.message.messageType,
+                            ),
+                          ),
+                        );
+                      },
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
                 ],
               ),
-            ),
-          );
-        }
-
-        final resolved = snap.data;
-        final screenW = MediaQuery.of(context).size.width;
-        final maxBubbleW = screenW * 0.70;
-        final targetW = maxBubbleW;
-        final targetH = (targetW / (16 / 9)).clamp(160.0, 360.0);
-
-        if (resolved != null && resolved.isNotEmpty) {
-          // Initialize controller to show first frame as a thumbnail.
-          unawaited(_ensureController(resolved));
-        }
-
-        // Duration badge requires duration metadata; keep null for now.
-        final String? durationLabel = null;
-
-        return SizedBox(
-          width: targetW,
-          height: targetH,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (resolved == null)
-                  const _ShimmerBox(radius: 14)
-                else if (_controller != null &&
-                    _controller!.value.isInitialized)
-                  FittedBox(
-                    fit: BoxFit.cover,
-                    clipBehavior: Clip.hardEdge,
-                    child: SizedBox(
-                      width: _controller!.value.size.width,
-                      height: _controller!.value.size.height,
-                      child: VideoPlayer(_controller!),
-                    ),
-                  )
-                else
-                  ColoredBox(
-                    color: AppColors.highlight.withOpacity(0.65),
-                    child: const SizedBox.expand(),
-                  ),
-                Positioned(
-                  left: 8,
-                  top: 8,
-                  child: const Icon(
-                    Icons.play_arrow_rounded,
-                    size: 18,
-                    color: Colors.white,
-                  ),
-                ),
-                if (durationLabel != null)
-                  Positioned(
-                    right: 8,
-                    bottom: 8,
-                    child: Text(
-                      durationLabel,
-                      style: const TextStyle(
-                        color: Color(0xFFFFFFFF),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        shadows: [
-                          Shadow(
-                            offset: Offset(0, 1),
-                            blurRadius: 2,
-                            color: Colors.black54,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                Positioned(
-                  right: 6,
-                  bottom: 6,
-                  child: _MediaMetaOverlay(
-                    timestamp: widget.message.timestamp,
-                    isMe: widget.isMe,
-                    status: widget.message.status,
-                    isPending: widget.message.hasPendingWrites,
-                  ),
-                ),
-                Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => _VideoFullscreen(
-                            url: widget.message.mediaUrl ?? '',
-                            type: widget.message.messageType,
-                          ),
-                        ),
-                      );
-                    },
-                    child: const SizedBox.expand(),
-                  ),
-                ),
-              ],
             ),
           ),
         );
@@ -727,7 +873,7 @@ class _AudioInlineState extends State<_AudioInline> {
 
     if (_error != null) {
       final bg = widget.isMe
-          ? const Color(0xFF7A1F3D)
+          ? const Color(0xFF4752C4)
           : const Color(0xFF0F0F0F);
       return ClipRRect(
         borderRadius: BorderRadius.circular(14),
@@ -763,7 +909,7 @@ class _AudioInlineState extends State<_AudioInline> {
     const mainColor = Color(0xFFFFFFFF);
     const playedColor = Color(0xFFFFFFFF);
     final unplayedColor = Colors.white.withOpacity(0.24);
-    final bg = widget.isMe ? const Color(0xFF7A1F3D) : const Color(0xFF0F0F0F);
+    final bg = widget.isMe ? const Color(0xFF4752C4) : const Color(0xFF0F0F0F);
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: ColoredBox(
@@ -1035,7 +1181,7 @@ class _FileTile extends StatelessWidget {
                               [
                                 if (ext.isNotEmpty) ext,
                                 if (sizeLabel.isNotEmpty) sizeLabel,
-                              ].join(' • '),
+                              ].join(' - '),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -1382,3 +1528,5 @@ class _FullscreenVideoControlsState extends State<_FullscreenVideoControls> {
     );
   }
 }
+
+

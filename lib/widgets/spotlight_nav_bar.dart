@@ -189,6 +189,8 @@ class _SpotlightNavBarState extends State<SpotlightNavBar>
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
     final bottomInset = MediaQuery.of(context).padding.bottom;
     final totalHeight = widget.height + bottomInset;
 
@@ -198,28 +200,40 @@ class _SpotlightNavBarState extends State<SpotlightNavBar>
       child: Container(
         height: widget.height,
         decoration: BoxDecoration(
-          color: const Color(0xFF0F0F0F), // Matte charcoal
+          color: isLight ? theme.colorScheme.surface : const Color(0xFF0F0F0F),
           borderRadius: BorderRadius.circular(30),
-          border: Border(
-            left: BorderSide(color: AppColors.burgundy, width: 2),
-            right: BorderSide(color: AppColors.burgundy, width: 2),
-            top: BorderSide.none,
-            bottom: BorderSide.none,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.25),
-              blurRadius: 24,
-              spreadRadius: 0,
-              offset: const Offset(0, 12),
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.15),
-              blurRadius: 40,
-              spreadRadius: 0,
-              offset: const Offset(0, 20),
-            ),
-          ],
+          border: isLight
+              ? Border(
+                  top: BorderSide(color: Colors.black.withOpacity(0.05), width: 1),
+                )
+              : Border(
+                  left: BorderSide(color: AppColors.burgundy, width: 2),
+                  right: BorderSide(color: AppColors.burgundy, width: 2),
+                  top: BorderSide.none,
+                  bottom: BorderSide.none,
+                ),
+          boxShadow: isLight
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ]
+              : [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.25),
+                    blurRadius: 24,
+                    spreadRadius: 0,
+                    offset: const Offset(0, 12),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    blurRadius: 40,
+                    spreadRadius: 0,
+                    offset: const Offset(0, 20),
+                  ),
+                ],
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(30),
@@ -255,6 +269,7 @@ class _SpotlightNavBarState extends State<SpotlightNavBar>
                                 isSelected: i == _targetIndex,
                                 isTransitioning: _isAnimating,
                                 iconProgress: _iconAnimation.value,
+                                isLight: isLight,
                                 onTap: () => _handleTap(i),
                               ),
                           ],
@@ -262,77 +277,79 @@ class _SpotlightNavBarState extends State<SpotlightNavBar>
                       ),
 
                       // Top marker (locator) - much brighter
-                      Positioned(
-                        left: currentX - 18,
-                        top: 0,
-                        child: Container(
-                          width: 36,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: AppColors.burgundy,
-                            borderRadius: BorderRadius.circular(2),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.burgundy.withValues(
-                                  alpha: 0.8,
+                      if (!isLight)
+                        Positioned(
+                          left: currentX - 18,
+                          top: 0,
+                          child: Container(
+                            width: 36,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: AppColors.burgundy,
+                              borderRadius: BorderRadius.circular(2),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.burgundy.withValues(
+                                    alpha: 0.8,
+                                  ),
+                                  blurRadius: 12,
+                                  spreadRadius: 2,
                                 ),
-                                blurRadius: 12,
-                                spreadRadius: 2,
-                              ),
-                              BoxShadow(
-                                color: Colors.white.withValues(alpha: 0.3),
-                                blurRadius: 6,
-                                spreadRadius: 0,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                      // Light beam / glow cone - fades when reaching icons
-                      Positioned(
-                        left: currentX - 22,
-                        top: 2,
-                        child: Container(
-                          width: 44,
-                          height: 30,
-                          decoration: BoxDecoration(
-                            gradient: RadialGradient(
-                              center: const Alignment(0, -0.5),
-                              radius: 0.5,
-                              colors: [
-                                AppColors.burgundy.withValues(
-                                  alpha:
-                                      (0.8 * (1.0 - _markerAnimation.value)) *
-                                      _glowAnimation.value,
+                                BoxShadow(
+                                  color: Colors.white.withValues(alpha: 0.3),
+                                  blurRadius: 6,
+                                  spreadRadius: 0,
                                 ),
-                                AppColors.burgundy.withValues(
-                                  alpha:
-                                      (0.5 * (1.0 - _markerAnimation.value)) *
-                                      _glowAnimation.value,
-                                ),
-                                AppColors.burgundy.withValues(
-                                  alpha:
-                                      (0.2 * (1.0 - _markerAnimation.value)) *
-                                      _glowAnimation.value,
-                                ),
-                                Colors.transparent,
                               ],
                             ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.burgundy.withValues(
-                                  alpha:
-                                      (0.4 * (1.0 - _markerAnimation.value)) *
-                                      _glowAnimation.value,
-                                ),
-                                blurRadius: 20,
-                                spreadRadius: 0,
-                              ),
-                            ],
                           ),
                         ),
-                      ),
+
+                      // Light beam / glow cone - fades when reaching icons
+                      if (!isLight)
+                        Positioned(
+                          left: currentX - 22,
+                          top: 2,
+                          child: Container(
+                            width: 44,
+                            height: 30,
+                            decoration: BoxDecoration(
+                              gradient: RadialGradient(
+                                center: const Alignment(0, -0.5),
+                                radius: 0.5,
+                                colors: [
+                                  AppColors.burgundy.withValues(
+                                    alpha:
+                                        (0.8 * (1.0 - _markerAnimation.value)) *
+                                        _glowAnimation.value,
+                                  ),
+                                  AppColors.burgundy.withValues(
+                                    alpha:
+                                        (0.5 * (1.0 - _markerAnimation.value)) *
+                                        _glowAnimation.value,
+                                  ),
+                                  AppColors.burgundy.withValues(
+                                    alpha:
+                                        (0.2 * (1.0 - _markerAnimation.value)) *
+                                        _glowAnimation.value,
+                                  ),
+                                  Colors.transparent,
+                                ],
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.burgundy.withValues(
+                                    alpha:
+                                        (0.4 * (1.0 - _markerAnimation.value)) *
+                                        _glowAnimation.value,
+                                  ),
+                                  blurRadius: 20,
+                                  spreadRadius: 0,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                     ],
                   );
                 },
@@ -350,6 +367,7 @@ class _NavButton extends StatelessWidget {
   final bool isSelected;
   final bool isTransitioning;
   final double iconProgress;
+  final bool isLight;
   final VoidCallback onTap;
 
   const _NavButton({
@@ -357,6 +375,7 @@ class _NavButton extends StatelessWidget {
     required this.isSelected,
     required this.isTransitioning,
     required this.iconProgress,
+    required this.isLight,
     required this.onTap,
   });
 
@@ -371,13 +390,17 @@ class _NavButton extends StatelessWidget {
           child: Icon(
             item.icon,
             size: 22, // Slightly larger since no text
-            color: isSelected
-                ? Color.lerp(
-                    AppColors.white.withValues(alpha: 0.5),
-                    AppColors.burgundy,
-                    iconProgress,
-                  )
-                : AppColors.white.withValues(alpha: 0.4),
+            color: isLight
+                ? (isSelected
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurface.withOpacity(0.5))
+                : (isSelected
+                      ? Color.lerp(
+                          AppColors.white.withValues(alpha: 0.5),
+                          AppColors.burgundy,
+                          iconProgress,
+                        )
+                      : AppColors.white.withValues(alpha: 0.4)),
           ),
         ),
       ),
