@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'dart:async';
 
 import '../../services/firestore_service.dart';
 import '../../theme/theme.dart';
@@ -17,6 +18,9 @@ class GroupPermissionsScreen extends StatefulWidget {
 
 class _GroupPermissionsScreenState extends State<GroupPermissionsScreen> {
   final _auth = FirebaseAuth.instance;
+  final Map<String, bool> _localOverrides = <String, bool>{};
+  final Map<String, bool> _pendingWrites = <String, bool>{};
+  Timer? _debounce;
 
   Future<String?> _myRole() async {
     final uid = _auth.currentUser?.uid;
@@ -39,28 +43,58 @@ class _GroupPermissionsScreenState extends State<GroupPermissionsScreen> {
       (settings['permissions'] as Map?) ?? const {},
     );
 
-    bool readBool(String k, bool fallback) {
-      final v = perms[k];
-      if (v is bool) return v;
+    bool readAnyBool(List<String> keys, bool fallback) {
+      for (final k in keys) {
+        final v = perms[k];
+        if (v is bool) return v;
+      }
       return fallback;
     }
 
     return {
-      'membersCanEditSettings': readBool('membersCanEditSettings', false),
-      'membersCanSendMessages': readBool('membersCanSendMessages', true),
-      'membersCanAddMembers': readBool('membersCanAddMembers', false),
-      'membersCanInvite': readBool('membersCanInvite', false),
-      'adminsCanApproveMembers': readBool('adminsCanApproveMembers', false),
-      'adminsCanEditAdmins': readBool('adminsCanEditAdmins', true),
+      'editSettings': readAnyBool([
+        'editSettings',
+        'membersCanEditSettings',
+      ], false),
+      'sendMessages': readAnyBool([
+        'sendMessages',
+        'membersCanSendMessages',
+      ], true),
+      'addMembers': readAnyBool(['addMembers', 'membersCanAddMembers'], false),
+      'inviteViaLink': readAnyBool([
+        'inviteViaLink',
+        'membersCanInvite',
+      ], false),
+      'approveMembers': readAnyBool([
+        'approveMembers',
+        'adminsCanApproveMembers',
+      ], false),
+      'editAdmins': readAnyBool(['editAdmins', 'adminsCanEditAdmins'], true),
     };
   }
 
-  Future<void> _setPermission(String key, bool value) async {
-    await FirestoreService().dmChats.doc(widget.chatId).set({
-      'settings': {
-        'permissions': {key: value},
-      },
-    }, SetOptions(merge: true));
+  void _setPermissionOptimistic(String key, bool value) {
+    setState(() {
+      _localOverrides[key] = value;
+      _pendingWrites[key] = value;
+    });
+
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () async {
+      final toWrite = Map<String, bool>.from(_pendingWrites);
+      _pendingWrites.clear();
+      try {
+        await FirestoreService().dmChats.doc(widget.chatId).set({
+          'settings': {'permissions': toWrite},
+        }, SetOptions(merge: true));
+      } catch (_) {}
+    });
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
   }
 
   Widget _sectionTitle(String text) {
@@ -151,8 +185,12 @@ class _GroupPermissionsScreenState extends State<GroupPermissionsScreen> {
 
     final fs = FirestoreService();
 
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
+    final bg = isLight ? theme.colorScheme.background : AppColors.background;
+
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: bg,
       appBar: AppBar(
         title: const Text(
           'Group permissions',
@@ -169,7 +207,11 @@ class _GroupPermissionsScreenState extends State<GroupPermissionsScreen> {
         stream: fs.dmChats.doc(widget.chatId).snapshots(),
         builder: (context, snap) {
           final data = snap.data?.data() ?? const <String, dynamic>{};
-          final perms = _permissionsFrom(data);
+          final remote = _permissionsFrom(data);
+          final perms = <String, bool>{
+            for (final e in remote.entries)
+              e.key: _localOverrides[e.key] ?? e.value,
+          };
 
           return FutureBuilder<String?>(
             future: _myRole(),
@@ -214,10 +256,10 @@ class _GroupPermissionsScreenState extends State<GroupPermissionsScreen> {
                     title: 'Edit group settings',
                     subtitle:
                         'Allow members to edit name, description and group settings.',
-                    value: perms['membersCanEditSettings']!,
+                    value: perms['editSettings']!,
                     enabled: canEdit,
                     onChanged: (v) =>
-                        _setPermission('membersCanEditSettings', v),
+                        _setPermissionOptimistic('editSettings', v),
                   ),
                   const SizedBox(height: 12),
                   _glassTile(
@@ -225,10 +267,10 @@ class _GroupPermissionsScreenState extends State<GroupPermissionsScreen> {
                     title: 'Send new messages',
                     subtitle:
                         'Allow members to send new messages in this group.',
-                    value: perms['membersCanSendMessages']!,
+                    value: perms['sendMessages']!,
                     enabled: canEdit,
                     onChanged: (v) =>
-                        _setPermission('membersCanSendMessages', v),
+                        _setPermissionOptimistic('sendMessages', v),
                   ),
                   const SizedBox(height: 12),
                   _glassTile(
@@ -236,9 +278,9 @@ class _GroupPermissionsScreenState extends State<GroupPermissionsScreen> {
                     title: 'Add other members',
                     subtitle:
                         'Allow members to add people directly to the group.',
-                    value: perms['membersCanAddMembers']!,
+                    value: perms['addMembers']!,
                     enabled: canEdit,
-                    onChanged: (v) => _setPermission('membersCanAddMembers', v),
+                    onChanged: (v) => _setPermissionOptimistic('addMembers', v),
                   ),
                   const SizedBox(height: 12),
                   _glassTile(
@@ -246,28 +288,29 @@ class _GroupPermissionsScreenState extends State<GroupPermissionsScreen> {
                     title: 'Invite via link or QR Code',
                     subtitle:
                         'Allow members to generate invite links and QR codes.',
-                    value: perms['membersCanInvite']!,
+                    value: perms['inviteViaLink']!,
                     enabled: canEdit,
-                    onChanged: (v) => _setPermission('membersCanInvite', v),
+                    onChanged: (v) =>
+                        _setPermissionOptimistic('inviteViaLink', v),
                   ),
                   _sectionTitle('Admins can'),
                   _glassTile(
                     icon: Icons.verified_user_outlined,
                     title: 'Approve new members',
                     subtitle: 'Require admin approval for new join requests.',
-                    value: perms['adminsCanApproveMembers']!,
+                    value: perms['approveMembers']!,
                     enabled: canEdit,
                     onChanged: (v) =>
-                        _setPermission('adminsCanApproveMembers', v),
+                        _setPermissionOptimistic('approveMembers', v),
                   ),
                   const SizedBox(height: 12),
                   _glassTile(
                     icon: Icons.admin_panel_settings_outlined,
                     title: 'Edit group admins',
                     subtitle: 'Allow admins to promote/demote other members.',
-                    value: perms['adminsCanEditAdmins']!,
+                    value: perms['editAdmins']!,
                     enabled: canEdit,
-                    onChanged: (v) => _setPermission('adminsCanEditAdmins', v),
+                    onChanged: (v) => _setPermissionOptimistic('editAdmins', v),
                   ),
                 ],
               );

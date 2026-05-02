@@ -36,9 +36,7 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
           ? theme.colorScheme.background
           : AppColors.background,
       appBar: AppBar(
-        backgroundColor: isLight
-            ? theme.colorScheme.background
-            : null,
+        backgroundColor: isLight ? theme.colorScheme.background : null,
         elevation: 0,
         centerTitle: false,
         automaticallyImplyLeading: false,
@@ -192,9 +190,7 @@ class _ToSearchBar extends StatelessWidget {
           Text(
             'To:',
             style: TextStyle(
-              color: isLight
-                  ? theme.colorScheme.onSurface
-                  : Colors.black,
+              color: isLight ? theme.colorScheme.onSurface : Colors.black,
               fontWeight: FontWeight.w800,
               fontSize: 14,
             ),
@@ -206,9 +202,7 @@ class _ToSearchBar extends StatelessWidget {
               onChanged: onChanged,
               textAlignVertical: TextAlignVertical.center,
               style: TextStyle(
-                color: isLight
-                    ? theme.colorScheme.onSurface
-                    : Colors.black,
+                color: isLight ? theme.colorScheme.onSurface : Colors.black,
               ),
               decoration: InputDecoration(
                 isDense: true,
@@ -437,17 +431,13 @@ class _OptionRow extends StatelessWidget {
             backgroundColor: AppColors.sinopia.withOpacity(0.25),
             child: Icon(
               icon,
-              color: isLight
-                  ? theme.colorScheme.onBackground
-                  : AppColors.navy,
+              color: isLight ? theme.colorScheme.onBackground : AppColors.navy,
             ),
           ),
           title: Text(
             label,
             style: TextStyle(
-              color: isLight
-                  ? theme.colorScheme.onBackground
-                  : AppColors.navy,
+              color: isLight ? theme.colorScheme.onBackground : AppColors.navy,
               fontWeight: FontWeight.w600,
               fontSize: 13.5,
             ),

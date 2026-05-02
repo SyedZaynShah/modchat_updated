@@ -21,11 +21,14 @@ class MessageModel {
   final String? text;
   final MessageType messageType;
   final String? mediaUrl;
+  final String? mediaPath;
   final String? storagePath;
   final String? localPath;
+  final String? cachedPath;
   final String? thumbnailUrl;
   final int? mediaSize;
   final String uploadStatus; // done | uploading | failed
+  final double uploadProgress; // 0.0 .. 1.0
   final bool forwarded;
   final String? originalSenderId;
   final String? originalMessageId;
@@ -56,11 +59,14 @@ class MessageModel {
     required this.timestamp,
     this.text,
     this.mediaUrl,
+    this.mediaPath,
     this.storagePath,
     this.localPath,
+    this.cachedPath,
     this.thumbnailUrl,
     this.mediaSize,
     this.uploadStatus = 'done',
+    this.uploadProgress = 1.0,
     this.forwarded = false,
     this.originalSenderId,
     this.originalMessageId,
@@ -83,18 +89,24 @@ class MessageModel {
 
   factory MessageModel.fromMap(Map<String, dynamic> data, String id) {
     final url = (data['mediaUrl'] as String?) ?? '';
+    final mediaPath = data['mediaPath'] as String?;
     final storagePath = data['storagePath'] as String?;
     final localPath = data['localPath'] as String?;
+    final cachedPath = data['cachedPath'] as String?;
     final thumbnailUrl = data['thumbnailUrl'] as String?;
     final text = data['text'] as String?;
     final mediaType = (data['mediaType'] as String?)?.toLowerCase();
     final legacyMessageType = data['messageType'] as String?; // backward compat
     final uploadStatus = (data['uploadStatus'] as String?) ?? 'done';
+    final uploadProgress =
+        ((data['uploadProgress'] as num?)?.toDouble() ??
+                (uploadStatus == 'done' ? 1.0 : 0.0))
+            .clamp(0.0, 1.0);
     final kind = ((data['type'] as String?) ?? 'user').toLowerCase();
     final meta = (data['meta'] as Map?)?.cast<String, dynamic>();
     final replyTo = (data['replyTo'] as Map?)?.cast<String, dynamic>();
-    final userReactionsRaw =
-      (data['userReactions'] as Map?)?.cast<String, dynamic>();
+    final userReactionsRaw = (data['userReactions'] as Map?)
+        ?.cast<String, dynamic>();
     final reactionsRaw = (data['reactions'] as Map?)?.cast<String, dynamic>();
     final forwarded = (data['forwarded'] as bool?) ?? false;
     final originalSenderId = data['originalSender'] as String?;
@@ -135,7 +147,13 @@ class MessageModel {
     }
     final effectiveUrl = url.isNotEmpty
         ? url
-        : (text != null && _looksLikeUrl(text) ? text : null);
+        : (mediaPath != null && mediaPath.isNotEmpty
+              ? mediaPath
+              : (storagePath != null && storagePath.isNotEmpty
+                    ? storagePath
+                    : (text != null && _looksLikeUrl(text) ? text : null)));
+    final statusRaw = data['status'];
+    final parsedStatus = statusRaw is num ? statusRaw.toInt() : 1;
     return MessageModel(
       id: id,
       chatId: data['chatId'] as String,
@@ -145,11 +163,14 @@ class MessageModel {
       text: (effectiveUrl != null && type != MessageType.text) ? null : text,
       messageType: type,
       mediaUrl: effectiveUrl,
+      mediaPath: mediaPath,
       storagePath: storagePath,
       localPath: localPath,
+      cachedPath: cachedPath,
       thumbnailUrl: thumbnailUrl,
       mediaSize: (data['mediaSize'] as num?)?.toInt(),
       uploadStatus: uploadStatus,
+      uploadProgress: uploadProgress,
       forwarded: forwarded,
       originalSenderId: originalSenderId,
       originalMessageId: originalMessageId,
@@ -158,15 +179,15 @@ class MessageModel {
       replyToText: replyTo?['text'] as String?,
       replyToMessageType: replyTo?['messageType'] as String?,
       threadReplyCount: (data['threadReplyCount'] as num?)?.toInt(),
-        userReactions: _userReactionsFromRaw(userReactionsRaw),
-        reactions:
+      userReactions: _userReactionsFromRaw(userReactionsRaw),
+      reactions:
           _reactionCountsFromUserReactions(userReactionsRaw) ??
           _reactionCountsFromRaw(reactionsRaw),
       timestamp: data['timestamp'] as Timestamp? ?? Timestamp.now(),
       isSeen: data['isSeen'] as bool? ?? false,
       seenAt: data['seenAt'] as Timestamp?,
       deliveredAt: data['deliveredAt'] as Timestamp?,
-      status: (data['status'] as num?)?.toInt() ?? 1,
+      status: parsedStatus,
       edited: data['edited'] as bool? ?? false,
       isDeletedForAll:
           (data['isDeletedForAll'] as bool?) ??
@@ -182,18 +203,24 @@ class MessageModel {
   ) {
     final data = doc.data();
     final url = (data['mediaUrl'] as String?) ?? '';
+    final mediaPath = data['mediaPath'] as String?;
     final storagePath = data['storagePath'] as String?;
     final localPath = data['localPath'] as String?;
+    final cachedPath = data['cachedPath'] as String?;
     final thumbnailUrl = data['thumbnailUrl'] as String?;
     final text = data['text'] as String?;
     final mediaType = (data['mediaType'] as String?)?.toLowerCase();
     final legacyMessageType = data['messageType'] as String?;
     final uploadStatus = (data['uploadStatus'] as String?) ?? 'done';
+    final uploadProgress =
+        ((data['uploadProgress'] as num?)?.toDouble() ??
+                (uploadStatus == 'done' ? 1.0 : 0.0))
+            .clamp(0.0, 1.0);
     final kind = ((data['type'] as String?) ?? 'user').toLowerCase();
     final meta = (data['meta'] as Map?)?.cast<String, dynamic>();
     final replyTo = (data['replyTo'] as Map?)?.cast<String, dynamic>();
-    final userReactionsRaw =
-      (data['userReactions'] as Map?)?.cast<String, dynamic>();
+    final userReactionsRaw = (data['userReactions'] as Map?)
+        ?.cast<String, dynamic>();
     final reactionsRaw = (data['reactions'] as Map?)?.cast<String, dynamic>();
     final forwarded = (data['forwarded'] as bool?) ?? false;
     final originalSenderId = data['originalSender'] as String?;
@@ -233,7 +260,13 @@ class MessageModel {
     }
     final effectiveUrl = url.isNotEmpty
         ? url
-        : (text != null && _looksLikeUrl(text) ? text : null);
+        : (mediaPath != null && mediaPath.isNotEmpty
+              ? mediaPath
+              : (storagePath != null && storagePath.isNotEmpty
+                    ? storagePath
+                    : (text != null && _looksLikeUrl(text) ? text : null)));
+    final statusRaw = data['status'];
+    final parsedStatus = statusRaw is num ? statusRaw.toInt() : 1;
     return MessageModel(
       id: doc.id,
       chatId: data['chatId'] as String,
@@ -243,11 +276,14 @@ class MessageModel {
       text: (effectiveUrl != null && type != MessageType.text) ? null : text,
       messageType: type,
       mediaUrl: effectiveUrl,
+      mediaPath: mediaPath,
       storagePath: storagePath,
       localPath: localPath,
+      cachedPath: cachedPath,
       thumbnailUrl: thumbnailUrl,
       mediaSize: (data['mediaSize'] as num?)?.toInt(),
       uploadStatus: uploadStatus,
+      uploadProgress: uploadProgress,
       forwarded: forwarded,
       originalSenderId: originalSenderId,
       originalMessageId: originalMessageId,
@@ -256,15 +292,15 @@ class MessageModel {
       replyToText: replyTo?['text'] as String?,
       replyToMessageType: replyTo?['messageType'] as String?,
       threadReplyCount: (data['threadReplyCount'] as num?)?.toInt(),
-        userReactions: _userReactionsFromRaw(userReactionsRaw),
-        reactions:
+      userReactions: _userReactionsFromRaw(userReactionsRaw),
+      reactions:
           _reactionCountsFromUserReactions(userReactionsRaw) ??
           _reactionCountsFromRaw(reactionsRaw),
       timestamp: data['timestamp'] as Timestamp? ?? Timestamp.now(),
       isSeen: data['isSeen'] as bool? ?? false,
       seenAt: data['seenAt'] as Timestamp?,
       deliveredAt: data['deliveredAt'] as Timestamp?,
-      status: (data['status'] as num?)?.toInt() ?? 1,
+      status: parsedStatus,
       edited: data['edited'] as bool? ?? false,
       isDeletedForAll:
           (data['isDeletedForAll'] as bool?) ??
@@ -332,9 +368,7 @@ class MessageModel {
     return out;
   }
 
-  static Map<String, String>? _userReactionsFromRaw(
-    Map<String, dynamic>? raw,
-  ) {
+  static Map<String, String>? _userReactionsFromRaw(Map<String, dynamic>? raw) {
     if (raw == null) return null;
     if (raw.isEmpty) return <String, String>{};
     final out = <String, String>{};
@@ -368,10 +402,14 @@ class MessageModel {
       'text': text,
       'messageType': messageType.nameStr,
       'mediaUrl': mediaUrl,
+      'mediaPath': mediaPath,
       'storagePath': storagePath,
       'localPath': localPath,
+      'cachedPath': cachedPath,
       'thumbnailUrl': thumbnailUrl,
       'mediaSize': mediaSize,
+      'uploadStatus': uploadStatus,
+      'uploadProgress': uploadProgress,
       if (meta != null) 'meta': meta,
       'timestamp': timestamp,
       'isSeen': isSeen,

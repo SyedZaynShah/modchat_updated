@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/message_model.dart';
 import '../theme/theme.dart';
-import '../services/supabase_service.dart';
-import '../services/storage_service.dart';
 
 class SimpleAsyncMedia extends StatefulWidget {
   final MessageModel message;
@@ -46,16 +45,25 @@ class _SimpleAsyncMediaState extends State<SimpleAsyncMedia> {
 
     try {
       String resolved;
-      if (rawUrl.contains('://')) {
+      if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
         resolved = rawUrl;
       } else {
-        final bucket = widget.message.messageType == MessageType.audio
-            ? StorageService().audioBucket
-            : StorageService().mediaBucket;
-        resolved = await SupabaseService.instance.resolveUrl(
-          bucket: bucket,
-          path: rawUrl,
-        );
+        var path = rawUrl;
+        if (rawUrl.startsWith('sb://')) {
+          final s = rawUrl.substring(5);
+          final i = s.indexOf('/');
+          if (i > 0) {
+            path = s.substring(i + 1);
+          }
+        } else if (rawUrl.startsWith('chatMedia/')) {
+          path = rawUrl.substring('chatMedia/'.length);
+        }
+        resolved = await Supabase.instance.client.storage
+            .from('chatMedia')
+            .createSignedUrl(
+              path,
+              3600,
+            );
       }
 
       if (mounted) {
@@ -73,7 +81,6 @@ class _SimpleAsyncMediaState extends State<SimpleAsyncMedia> {
       }
     }
   }
-
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {

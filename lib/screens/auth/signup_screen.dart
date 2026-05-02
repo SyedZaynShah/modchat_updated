@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_providers.dart';
 import '../../theme/theme.dart';
+import '../../utils/auth_error_mapper.dart';
 import 'verify_email_screen.dart';
 import '../../ui/widgets/auth_ui.dart';
 import '../../ui/widgets/auth_fields.dart';
@@ -54,26 +56,63 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
     super.dispose();
   }
 
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
   Future<void> _signup() async {
+    // Input validation
+    final name = _name.text.trim();
+    final email = _email.text.trim();
+    final password = _password.text;
+    final confirmPassword = _confirm.text;
+
+    if (name.isEmpty || email.isEmpty || password.isEmpty) {
+      _showSnackBar('Please fill all fields');
+      return;
+    }
+
+    if (!email.contains('@')) {
+      _showSnackBar('Enter a valid email address');
+      return;
+    }
+
+    if (password.length < 6) {
+      _showSnackBar('Password must be at least 6 characters');
+      return;
+    }
+
+    if (password != confirmPassword) {
+      _showSnackBar('Passwords do not match');
+      return;
+    }
+
     setState(() {
       _loading = true;
       _error = null;
     });
+
     try {
       await ref
           .read(firebaseAuthServiceProvider)
-          .signUp(
-            name: _name.text.trim(),
-            email: _email.text.trim(),
-            password: _password.text,
-          );
+          .signUp(name: name, email: email, password: password);
       if (mounted) {
         Navigator.pushReplacementNamed(context, VerifyEmailScreen.routeName);
       }
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      final message = AuthErrorMapper.getMessage(e.code);
+      _showSnackBar(message);
     } catch (e) {
-      setState(() {
-        _error = e.toString();
-      });
+      if (!mounted) return;
+      _showSnackBar('Something went wrong. Please try again.');
     } finally {
       if (mounted) {
         setState(() {
@@ -388,11 +427,7 @@ class _WhitePillButtonState extends State<_WhitePillButton> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (widget.icon != null) ...[
-                      Icon(
-                        widget.icon,
-                        size: 18,
-                        color: Colors.white,
-                      ),
+                      Icon(widget.icon, size: 18, color: Colors.white),
                       const SizedBox(width: 8),
                     ],
                     Text(

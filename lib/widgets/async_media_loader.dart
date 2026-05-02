@@ -1,54 +1,60 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/message_model.dart';
-import '../services/supabase_service.dart';
-import '../services/storage_service.dart';
 import '../theme/theme.dart';
 
 class AsyncMediaLoader {
-  static final Map<String, String> _cache = {};
-
-  static Future<String?> getSignedUrl(String? rawUrl, MessageType type) async {
+  /// Resolves a media reference to a stable public URL.
+  /// Supports:
+  /// - Full HTTP(S) URLs (returned as-is)
+  /// - sb://bucket/path format
+  /// - bucket/path format (e.g., chatMedia/chatId/...)
+  static Future<String?> resolveUrl(String? rawUrl, MessageType type) async {
     if (rawUrl == null || rawUrl.isEmpty) return null;
 
-    // Check cache first
-    if (_cache.containsKey(rawUrl)) {
-      return _cache[rawUrl];
-    }
-
-    String? signedUrl;
     try {
-      if (rawUrl.contains('://')) {
-        final s = rawUrl.substring(5);
-        final i = s.indexOf('/');
-        final bucket = s.substring(0, i);
-        final path = s.substring(i + 1);
-        signedUrl = await SupabaseService.instance.getSignedUrl(
-          bucket,
-          path,
-          expiresInSeconds: 86400,
-        );
-      } else {
-        final bucket = type == MessageType.audio
-            ? StorageService().audioBucket
-            : StorageService().mediaBucket;
-        signedUrl = await SupabaseService.instance.resolveUrl(
-          bucket: bucket,
-          path: rawUrl,
-        );
+      // Already a full URL - return as-is
+      if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+        return rawUrl;
       }
 
-      // Cache the result
-      _cache[rawUrl] = signedUrl;
-      return signedUrl;
+      String bucket;
+      String path;
+
+      // Parse sb://bucket/path format
+      if (rawUrl.startsWith('sb://')) {
+        final s = rawUrl.substring(5);
+        final i = s.indexOf('/');
+        if (i > 0) {
+          bucket = s.substring(0, i);
+          path = s.substring(i + 1);
+        } else {
+          return null;
+        }
+      } else if (rawUrl.contains('/')) {
+        // bucket/path format
+        final i = rawUrl.indexOf('/');
+        bucket = rawUrl.substring(0, i);
+        path = rawUrl.substring(i + 1);
+      } else {
+        return null;
+      }
+
+      // Return stable public URL (never expires)
+      return Supabase.instance.client.storage.from(bucket).getPublicUrl(path);
     } catch (e) {
-      // Return original URL on error to prevent blocking
-      return rawUrl;
+      return null;
     }
   }
 
+  @Deprecated('Use resolveUrl instead')
+  static Future<String?> getSignedUrl(String? rawUrl, MessageType type) async {
+    return resolveUrl(rawUrl, type);
+  }
+
   static void clearCache() {
-    _cache.clear();
+    // no-op: public urls are stable
   }
 }
 
@@ -83,7 +89,13 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
   Future<void> _loadMedia() async {
     if (!mounted) return;
 
-    final rawUrl = widget.message.mediaUrl ?? '';
+    // Check both mediaUrl and mediaPath (mediaPath stores bucket/path)
+    final rawUrl = (widget.message.mediaUrl?.isNotEmpty == true)
+        ? widget.message.mediaUrl!
+        : (widget.message.mediaPath?.isNotEmpty == true)
+        ? widget.message.mediaPath!
+        : '';
+
     if (rawUrl.isEmpty) {
       if (mounted) {
         setState(() {
@@ -96,7 +108,7 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
 
     setState(() => _isLoading = true);
 
-    final resolved = await AsyncMediaLoader.getSignedUrl(
+    final resolved = await AsyncMediaLoader.resolveUrl(
       rawUrl,
       widget.message.messageType,
     );
@@ -140,27 +152,57 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
   Widget _buildImageWidget() {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: Image.network(
-        _resolvedUrl!,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return widget.placeholder;
-        },
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return Container(
-            decoration: BoxDecoration(
-              color: widget.isMe ? AppColors.navy : AppColors.surface,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Center(
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(AppColors.highlight),
-              ),
-            ),
-          );
-        },
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Grey placeholder background
+          Container(color: Colors.grey.shade300),
+          // Actual image with loading and fade-in
+          Image.network(
+            _resolvedUrl!,
+            fit: BoxFit.cover,
+            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+              // Fade in when frame is ready
+              if (wasSynchronouslyLoaded || frame != null) {
+                return AnimatedOpacity(
+                  opacity: 1.0,
+                  duration: const Duration(milliseconds: 300),
+                  child: child,
+                );
+              }
+              // Still loading - show placeholder
+              return const SizedBox.shrink();
+            },
+            errorBuilder: (context, error, stackTrace) {
+              return Container(
+                color: Colors.grey.shade300,
+                child: const Center(
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.grey,
+                    size: 32,
+                  ),
+                ),
+              );
+            },
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              // Show progress indicator on top of grey background
+              return Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                            loadingProgress.expectedTotalBytes!
+                      : null,
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    AppColors.highlight,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
@@ -169,6 +211,7 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: Container(
+        height: 200,
         decoration: BoxDecoration(
           color: Colors.black,
           borderRadius: BorderRadius.circular(12),
@@ -176,31 +219,59 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Video thumbnail placeholder
+            // Dark background placeholder
+            Container(color: Colors.black),
+            // Video thumbnail preview
             if (_resolvedUrl != null && _resolvedUrl!.isNotEmpty)
               Image.network(
                 _resolvedUrl!,
                 fit: BoxFit.cover,
+                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                  if (wasSynchronouslyLoaded || frame != null) {
+                    return AnimatedOpacity(
+                      opacity: 1.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: child,
+                    );
+                  }
+                  return const SizedBox.shrink();
+                },
                 errorBuilder: (context, error, stackTrace) {
-                  return widget.placeholder;
+                  return Container(
+                    color: Colors.grey.shade900,
+                    child: const Center(
+                      child: Icon(
+                        Icons.videocam_off_outlined,
+                        color: Colors.grey,
+                        size: 32,
+                      ),
+                    ),
+                  );
+                },
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return Center(
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      value: loadingProgress.expectedTotalBytes != null
+                          ? loadingProgress.cumulativeBytesLoaded /
+                                loadingProgress.expectedTotalBytes!
+                          : null,
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        AppColors.highlight,
+                      ),
+                    ),
+                  );
                 },
               ),
-            // Loading overlay
-            if (_isLoading)
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.7),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Center(
-                  child: const CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      AppColors.highlight,
-                    ),
-                  ),
-                ),
+            // Play button overlay (centered)
+            const Center(
+              child: Icon(
+                Icons.play_circle_fill_rounded,
+                size: 48,
+                color: Colors.white,
               ),
+            ),
           ],
         ),
       ),
@@ -208,29 +279,118 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
   }
 
   Widget _buildAudioWidget() {
+    final hasUrl = _resolvedUrl != null && _resolvedUrl!.isNotEmpty;
+    final isUploading = widget.message.uploadStatus == 'uploading';
+    final isLoading = _isLoading || (isUploading && hasUrl == false);
+    final isReady = hasUrl && !isLoading && !isUploading;
+
     return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: widget.isMe ? AppColors.navy : AppColors.surface,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         children: [
+          // Mic icon
           Icon(
-            Icons.audiotrack,
-            color: widget.isMe ? Colors.white : Colors.black,
-            size: 24,
+            Icons.mic,
+            color: isReady
+                ? (widget.isMe ? Colors.white : Colors.black)
+                : (widget.isMe ? Colors.white70 : Colors.black54),
+            size: 20,
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
+          // Waveform or progress area
           Expanded(
-            child: Text(
-              'Audio Message',
-              style: TextStyle(
-                color: widget.isMe ? Colors.white : Colors.black,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
+            child: Container(
+              height: 32,
+              child: isUploading
+                  ? // Uploading state - show progress bar
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        LinearProgressIndicator(
+                          value: widget.message.uploadProgress > 0
+                              ? widget.message.uploadProgress
+                              : null,
+                          backgroundColor: widget.isMe
+                              ? Colors.white.withOpacity(0.2)
+                              : Colors.black.withOpacity(0.1),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            widget.isMe ? Colors.white : AppColors.highlight,
+                          ),
+                          minHeight: 3,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Uploading...',
+                          style: TextStyle(
+                            color: widget.isMe
+                                ? Colors.white70
+                                : Colors.black54,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    )
+                  : isLoading
+                  ? // Loading state - shimmer effect
+                    Container(
+                      decoration: BoxDecoration(
+                        color: widget.isMe
+                            ? Colors.white.withOpacity(0.1)
+                            : Colors.black.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const _AudioWaveformPlaceholder(),
+                    )
+                  : // Ready state - waveform placeholder
+                    Container(
+                      decoration: BoxDecoration(
+                        color: widget.isMe
+                            ? Colors.white.withOpacity(0.1)
+                            : Colors.black.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const _AudioWaveformPlaceholder(),
+                    ),
             ),
           ),
+          const SizedBox(width: 10),
+          // Play button (only when ready)
+          isReady
+              ? IconButton(
+                  icon: Icon(
+                    Icons.play_arrow,
+                    color: widget.isMe ? Colors.white : Colors.black,
+                  ),
+                  onPressed: () {
+                    // Play audio - actual implementation handled elsewhere
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                )
+              : isUploading
+              ? SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    value: widget.message.uploadProgress > 0
+                        ? widget.message.uploadProgress
+                        : null,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      widget.isMe ? Colors.white70 : Colors.black54,
+                    ),
+                  ),
+                )
+              : const SizedBox(width: 32),
         ],
       ),
     );
@@ -265,6 +425,42 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Audio waveform placeholder widget (WhatsApp-style bars)
+class _AudioWaveformPlaceholder extends StatelessWidget {
+  const _AudioWaveformPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: List.generate(12, (index) {
+        final heights = [
+          8.0,
+          16.0,
+          12.0,
+          20.0,
+          14.0,
+          18.0,
+          10.0,
+          22.0,
+          16.0,
+          12.0,
+          20.0,
+          14.0,
+        ];
+        return Container(
+          width: 2,
+          height: heights[index],
+          decoration: BoxDecoration(
+            color: Colors.grey.withOpacity(0.3),
+            borderRadius: BorderRadius.circular(1),
+          ),
+        );
+      }),
     );
   }
 }

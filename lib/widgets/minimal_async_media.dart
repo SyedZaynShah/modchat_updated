@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/message_model.dart';
 import '../theme/theme.dart';
 
@@ -45,11 +46,21 @@ class _MinimalAsyncMediaState extends State<MinimalAsyncMedia> {
     setState(() => _isLoading = true);
 
     try {
-      // Simple URL resolution - no complex caching for now
       String resolved = rawUrl;
-      if (!rawUrl.contains('://')) {
-        // For now, just use the raw URL as-is
-        resolved = rawUrl;
+      if (!(rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))) {
+        var path = rawUrl;
+        if (rawUrl.startsWith('sb://')) {
+          final s = rawUrl.substring(5);
+          final i = s.indexOf('/');
+          if (i > 0) {
+            path = s.substring(i + 1);
+          }
+        } else if (rawUrl.startsWith('chatMedia/')) {
+          path = rawUrl.substring('chatMedia/'.length);
+        }
+        resolved = await Supabase.instance.client.storage
+            .from('chatMedia')
+            .createSignedUrl(path, 3600);
       }
 
       if (mounted) {

@@ -38,6 +38,7 @@ dependencies:
   firebase_core: ^4.2.1
   firebase_auth: ^6.1.2
   cloud_firestore: ^6.1.0
+  firebase_storage: ^13.0.3
   supabase_flutter: ^2.10.3
   flutter_dotenv: ^6.0.0
   flutter_webrtc: ^1.2.1
@@ -56,6 +57,8 @@ dependencies:
   http: ^1.6.0
   photo_view: ^0.15.0
   cached_network_image: ^3.4.1
+  flutter_cache_manager: ^3.4.1
+  video_thumbnail: ^0.5.6
   qr_flutter: ^4.1.0
   app_links: ^6.4.1
   shared_preferences: ^2.5.3

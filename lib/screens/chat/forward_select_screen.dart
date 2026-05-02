@@ -93,7 +93,9 @@ class _ForwardSelectScreenState extends ConsumerState<ForwardSelectScreen> {
                 hintText: 'Search chats',
                 hintStyle: const TextStyle(color: Color(0xFF8A8A8A)),
                 filled: true,
-                fillColor: isDark ? AppColors.darkSurface : AppColors.lightSurface,
+                fillColor: isDark
+                    ? AppColors.darkSurface
+                    : AppColors.lightSurface,
                 prefixIcon: const Icon(
                   Icons.search_rounded,
                   color: Color(0xFF8A8A8A),
@@ -108,7 +110,10 @@ class _ForwardSelectScreenState extends ConsumerState<ForwardSelectScreen> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(18),
-                  borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+                  borderSide: const BorderSide(
+                    color: AppColors.primary,
+                    width: 1.5,
+                  ),
                 ),
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -242,4 +247,3 @@ class _ForwardSelectScreenState extends ConsumerState<ForwardSelectScreen> {
     return peer.isEmpty ? 'Chat' : peer;
   }
 }
-

@@ -550,8 +550,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
           text: text,
           replyTo: reply?.toMap(),
         );
-      await _touchLastRead(force: true);
-      _cachedUnreadMessageId = null;
+    await _touchLastRead(force: true);
+    _cachedUnreadMessageId = null;
     _forceScrollToBottom();
   }
 
@@ -642,7 +642,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
     );
     final ids = messages.map((m) => m.id).toSet();
 
-    if (_cachedUnreadMessageId != null && !ids.contains(_cachedUnreadMessageId)) {
+    if (_cachedUnreadMessageId != null &&
+        !ids.contains(_cachedUnreadMessageId)) {
       _cachedUnreadMessageId = null;
     }
     if (computed == null) {
@@ -1079,11 +1080,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
                                 final filtered = list
                                     .where((m) => !hidden.contains(m.id))
                                     .toList();
-                                final unreadBoundaryId = _resolveUnreadBoundaryId(
-                                  messages: filtered,
-                                  chatData: chatData,
-                                  currentUid: me,
-                                );
+                                final unreadBoundaryId =
+                                    _resolveUnreadBoundaryId(
+                                      messages: filtered,
+                                      chatData: chatData,
+                                      currentUid: me,
+                                    );
                                 _syncReplyTargetWithMessages(filtered);
 
                                 if (_ackSent) {
@@ -1610,7 +1612,9 @@ class _UnreadDivider extends StatelessWidget {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.55),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.55),
               ),
             ),
           ),
@@ -1765,10 +1769,7 @@ class _BlockMessageView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            forwardedTag,
-            content,
-          ],
+          children: [forwardedTag, content],
         ),
       );
     } else {
@@ -1777,7 +1778,9 @@ class _BlockMessageView extends StatelessWidget {
           : (isDark ? AppColors.darkCard : AppColors.incomingBubbleLight);
       final border = !isMe
           ? Border.all(
-              color: isDark ? AppColors.darkBorder : AppColors.bubbleBorderLight,
+              color: isDark
+                  ? AppColors.darkBorder
+                  : AppColors.bubbleBorderLight,
               width: 1,
             )
           : null;
@@ -1912,11 +1915,7 @@ class _ReactionsRow extends StatelessWidget {
   final Map<String, int> reactions;
   final String? myReaction;
   final VoidCallback? onTap;
-  const _ReactionsRow({
-    required this.reactions,
-    this.myReaction,
-    this.onTap,
-  });
+  const _ReactionsRow({required this.reactions, this.myReaction, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -2067,12 +2066,12 @@ class _InlineReplyCard extends ConsumerWidget {
                     style: TextStyle(
                       fontSize: 11,
                       color: preview.isEmpty
-                        ? (isLight
-                          ? const Color(0xFF6B7280)
-                          : const Color(0xFF888888))
-                        : (isLight
-                          ? const Color(0xFF4B5563)
-                          : const Color(0xFFB5B5B5)),
+                          ? (isLight
+                                ? const Color(0xFF6B7280)
+                                : const Color(0xFF888888))
+                          : (isLight
+                                ? const Color(0xFF4B5563)
+                                : const Color(0xFFB5B5B5)),
                       fontStyle: preview.isEmpty
                           ? FontStyle.italic
                           : FontStyle.normal,
@@ -2320,5 +2319,3 @@ class _EmptyChatState extends StatelessWidget {
     );
   }
 }
-
-

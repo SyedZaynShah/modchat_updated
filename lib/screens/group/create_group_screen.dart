@@ -1,10 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:typed_data';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../providers/chat_providers.dart';
 import '../../services/firestore_service.dart';
+import '../../services/storage_service.dart';
 import '../../theme/theme.dart';
 import '../chat/group_chat_detail_screen.dart';
 
@@ -21,6 +24,8 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
   final _desc = TextEditingController();
   final Set<String> _selected = <String>{};
   bool _creating = false;
+  Uint8List? _groupPhoto;
+  bool _pickingPhoto = false;
 
   @override
   void dispose() {
@@ -59,6 +64,21 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
             description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
             photoUrl: null,
           );
+
+      if (_groupPhoto != null) {
+        final path =
+            'group_avatars/${chatId}_${DateTime.now().millisecondsSinceEpoch}.png';
+        final bucket = StorageService().profileBucket;
+        await StorageService().uploadBytes(
+          data: _groupPhoto!,
+          bucket: bucket,
+          path: path,
+          contentType: 'image/png',
+        );
+        await FirestoreService().dmChats.doc(chatId).set({
+          'photoUrl': path,
+        }, SetOptions(merge: true));
+      }
       if (!mounted) return;
       Navigator.pushReplacementNamed(
         context,
@@ -103,9 +123,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
           TextButton(
             onPressed: _creating ? null : _create,
             style: TextButton.styleFrom(
-              foregroundColor: isLight
-                  ? theme.colorScheme.primary
-                  : null,
+              foregroundColor: isLight ? theme.colorScheme.primary : null,
             ),
             child: _creating
                 ? SizedBox(
@@ -129,12 +147,118 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
+                GestureDetector(
+                  onTap: _pickingPhoto
+                      ? null
+                      : () async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          setState(() => _pickingPhoto = true);
+                          try {
+                            final ImageSource? chosen =
+                                await showModalBottomSheet<ImageSource>(
+                                  context: context,
+                                  builder: (ctx) => SafeArea(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        ListTile(
+                                          leading: const Icon(
+                                            Icons.camera_alt_outlined,
+                                          ),
+                                          title: const Text('Camera'),
+                                          onTap: () => Navigator.pop(
+                                            ctx,
+                                            ImageSource.camera,
+                                          ),
+                                        ),
+                                        ListTile(
+                                          leading: const Icon(
+                                            Icons.photo_library_outlined,
+                                          ),
+                                          title: const Text('Gallery'),
+                                          onTap: () => Navigator.pop(
+                                            ctx,
+                                            ImageSource.gallery,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                            if (chosen == null) return;
+                            final picker = ImagePicker();
+                            final XFile? x = await picker.pickImage(
+                              source: chosen,
+                              maxWidth: 720,
+                              maxHeight: 720,
+                              imageQuality: 75,
+                            );
+                            if (x == null) return;
+                            final bytes = await x.readAsBytes();
+                            if (!mounted) return;
+                            setState(() {
+                              _groupPhoto = Uint8List.fromList(bytes);
+                            });
+                          } catch (e) {
+                            if (!mounted) return;
+                            messenger.showSnackBar(
+                              SnackBar(content: Text('Photo pick failed: $e')),
+                            );
+                          } finally {
+                            if (mounted) setState(() => _pickingPhoto = false);
+                          }
+                        },
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      CircleAvatar(
+                        radius: 34,
+                        backgroundColor: isLight
+                            ? theme.colorScheme.surface
+                            : const Color(0xFF111111),
+                        backgroundImage: _groupPhoto == null
+                            ? null
+                            : MemoryImage(_groupPhoto!),
+                        child: _groupPhoto == null
+                            ? Icon(
+                                Icons.camera_alt_outlined,
+                                color: isLight
+                                    ? theme.colorScheme.onSurface.withOpacity(
+                                        0.65,
+                                      )
+                                    : Colors.white70,
+                              )
+                            : null,
+                      ),
+                      if (_pickingPhoto)
+                        Container(
+                          width: 68,
+                          height: 68,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.25),
+                            borderRadius: BorderRadius.circular(34),
+                          ),
+                          child: const Center(
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: _name,
                   style: TextStyle(
-                    color: isLight
-                        ? theme.colorScheme.onSurface
-                        : null,
+                    color: isLight ? theme.colorScheme.onSurface : null,
                   ),
                   decoration: InputDecoration(
                     labelText: 'Group name',
@@ -171,9 +295,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                 TextField(
                   controller: _desc,
                   style: TextStyle(
-                    color: isLight
-                        ? theme.colorScheme.onSurface
-                        : null,
+                    color: isLight ? theme.colorScheme.onSurface : null,
                   ),
                   decoration: InputDecoration(
                     labelText: 'Description (optional)',
@@ -253,9 +375,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                   decoration: BoxDecoration(
                     color: isLight ? theme.colorScheme.surface : null,
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Colors.black.withOpacity(0.05),
-                    ),
+                    border: Border.all(color: Colors.black.withOpacity(0.05)),
                   ),
                   child: ListView.builder(
                     itemCount: filtered.length,

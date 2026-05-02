@@ -328,7 +328,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               icon: Icon(
                 Icons.edit_outlined,
                 size: 20,
-                color: isLight ? const Color(0xFF667085) : const Color(0xFFA0A0A0),
+                color: isLight
+                    ? const Color(0xFF667085)
+                    : const Color(0xFFA0A0A0),
               ),
             ),
             const SizedBox(width: 6),
@@ -815,7 +817,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onTap: () {
                   final blocked = user?.blockedUsers ?? const [];
                   final sheetTheme = Theme.of(context);
-                  final sheetIsLight = sheetTheme.brightness == Brightness.light;
+                  final sheetIsLight =
+                      sheetTheme.brightness == Brightness.light;
                   showModalBottomSheet<void>(
                     context: context,
                     backgroundColor: sheetIsLight
@@ -1137,7 +1140,9 @@ class _AppearanceOptionTile extends StatelessWidget {
                 child: Icon(
                   icon,
                   size: 20,
-                  color: isLight ? const Color(0xFF667085) : const Color(0xFFA0A0A0),
+                  color: isLight
+                      ? const Color(0xFF667085)
+                      : const Color(0xFFA0A0A0),
                 ),
               ),
               const SizedBox(width: 12),
@@ -1147,9 +1152,7 @@ class _AppearanceOptionTile extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: isLight
-                        ? theme.colorScheme.onSurface
-                        : Colors.white,
+                    color: isLight ? theme.colorScheme.onSurface : Colors.white,
                   ),
                 ),
               ),
@@ -1189,7 +1192,9 @@ class _QuickAction extends StatelessWidget {
             Icon(
               icon,
               size: 20,
-              color: isLight ? const Color(0xFF667085) : const Color(0xFFA0A0A0),
+              color: isLight
+                  ? const Color(0xFF667085)
+                  : const Color(0xFFA0A0A0),
             ),
             const SizedBox(height: 6),
             Text(
@@ -1542,7 +1547,9 @@ class _SettingsSkeleton extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 16),
           height: 70,
           decoration: BoxDecoration(
-            color: isLight ? theme.colorScheme.surface : const Color(0xFF101010),
+            color: isLight
+                ? theme.colorScheme.surface
+                : const Color(0xFF101010),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
               color: isLight
@@ -1578,7 +1585,9 @@ class _SettingsSkeleton extends StatelessWidget {
           margin: const EdgeInsets.fromLTRB(16, 8, 16, 10),
           height: 92,
           decoration: BoxDecoration(
-            color: isLight ? theme.colorScheme.surface : const Color(0xFF101010),
+            color: isLight
+                ? theme.colorScheme.surface
+                : const Color(0xFF101010),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: isLight
@@ -1596,7 +1605,9 @@ class _SettingsSkeleton extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: isLight ? const Color(0xFFF1C5C5) : const Color(0xFF3A1F1F),
+              color: isLight
+                  ? const Color(0xFFF1C5C5)
+                  : const Color(0xFF3A1F1F),
               width: 1,
             ),
           ),
@@ -1605,4 +1616,3 @@ class _SettingsSkeleton extends StatelessWidget {
     );
   }
 }
-

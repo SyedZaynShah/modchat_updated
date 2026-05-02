@@ -9,6 +9,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:video_thumbnail/video_thumbnail.dart';
 import '../theme/theme.dart';
 import '../models/message_model.dart';
 import '../services/firestore_service.dart';
@@ -204,7 +205,27 @@ class _InputFieldState extends State<InputField> {
     );
     mime ??= _inferMime(name);
     final typeOut = _typeFromMime(mime);
-    await widget.onSendMedia(bytes, name, mime, typeOut, localPath: localPath);
+    String? thumbnailPath;
+    if (!kIsWeb && typeOut == MessageType.video && localPath != null) {
+      try {
+        thumbnailPath = await VideoThumbnail.thumbnailFile(
+          video: localPath,
+          imageFormat: ImageFormat.JPEG,
+          quality: 75,
+        );
+      } catch (_) {
+        thumbnailPath = null;
+      }
+    }
+
+    await widget.onSendMedia(
+      bytes,
+      name,
+      mime,
+      typeOut,
+      localPath: localPath,
+      thumbnailPath: thumbnailPath,
+    );
   }
 
   String _inferMime(String name) {
@@ -334,11 +355,9 @@ class _InputFieldState extends State<InputField> {
       'voice_${DateTime.now().millisecondsSinceEpoch}.wav',
       'audio/wav',
       MessageType.audio,
+      localPath: path,
       durationMs: duration,
     );
-    try {
-      File(path).deleteSync();
-    } catch (_) {}
   }
 
   Future<void> _send() async {

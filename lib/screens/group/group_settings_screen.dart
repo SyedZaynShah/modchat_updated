@@ -4,12 +4,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../models/message_model.dart';
 import '../../providers/chat_providers.dart';
 import '../../providers/user_providers.dart';
 import '../../services/firestore_service.dart';
+import '../../services/group_moderation_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/supabase_service.dart';
 import '../../theme/theme.dart';
@@ -50,21 +52,103 @@ class _JoinRequestsSection extends ConsumerWidget {
         Future<void> approve(String uid) async {
           final messenger = ScaffoldMessenger.of(context);
           try {
+            print('ADDING MEMBER $uid');
+            final myUid = FirebaseAuth.instance.currentUser?.uid;
+            if (myUid == null) {
+              messenger.showSnackBar(
+                const SnackBar(
+                  content: Text('You are not allowed to perform this action'),
+                ),
+              );
+              return;
+            }
+            final myRoleSnap = await chatRef
+                .collection('members')
+                .doc(myUid)
+                .get();
+            final myRole = (myRoleSnap.data()?['role'] as String?) ?? 'member';
+            final isAdmin = myRole == 'owner' || myRole == 'admin';
+            if (!isAdmin) {
+              messenger.showSnackBar(
+                const SnackBar(
+                  content: Text('You are not allowed to perform this action'),
+                ),
+              );
+              return;
+            }
+
+            // ✅ TRANSACTION: Atomic member addition
+            print("ADDING MEMBER: $uid by $myUid");
             await FirebaseFirestore.instance.runTransaction((tx) async {
+              final memberRef = chatRef.collection('members').doc(uid);
+              final memberSnap = await tx.get(memberRef);
+
+              // ✅ Prevent duplicate add
+              if (memberSnap.exists) {
+                print("User already a member, skipping");
+                return;
+              }
+
+              // ✅ Create member doc
+              tx.set(memberRef, {
+                'userId': uid,
+                'role': 'member',
+                'joinedAt': FieldValue.serverTimestamp(),
+                'removedAt': null,
+                'removeType': null,
+                'removedBy': null,
+                'muteUntil': null,
+                'lastSentAt': null,
+                'isBanned': false,
+                'bannedUntil': null,
+                'banReason': null,
+              });
+
+              // ✅ Update members array
               tx.update(chatRef, {
                 'members': FieldValue.arrayUnion([uid]),
                 'memberCount': FieldValue.increment(1),
               });
-              tx.set(chatRef.collection('members').doc(uid), {
-                'userId': uid,
-                'role': 'member',
-                'joinedAt': FieldValue.serverTimestamp(),
-                'muteUntil': null,
-                'lastSentAt': null,
-                'isBanned': false,
-              });
-              tx.delete(chatRef.collection('pendingMembers').doc(uid));
             });
+
+            // ✅ SECONDARY: Delete pending member request (silent)
+            try {
+              await chatRef.collection('pendingMembers').doc(uid).delete();
+            } catch (e) {
+              print("PENDING DELETE FAILED: $e");
+            }
+
+            // ✅ SECONDARY: Create system message (silent)
+            try {
+              final moderationService = GroupModerationService(
+                FirestoreService(),
+              );
+              await moderationService.writeSystemMessageWithNames(
+                chatId: chatId,
+                action: 'member_added',
+                actorId: myUid,
+                targetId: uid,
+                buildText: (actorName, targetName) {
+                  final t = targetName ?? uid;
+                  return '$t was added by $actorName';
+                },
+              );
+            } catch (e) {
+              print("SYSTEM MESSAGE FAILED: $e");
+            }
+          } on FirebaseException catch (e) {
+            final isPermissionError =
+                e.code == 'permission-denied' ||
+                e.toString().toLowerCase().contains('permission');
+            messenger.showSnackBar(
+              SnackBar(
+                content: Text(
+                  isPermissionError
+                      ? 'You are not allowed to perform this action'
+                      : 'Approve failed: $e',
+                ),
+              ),
+            );
           } catch (e) {
             messenger.showSnackBar(
               SnackBar(content: Text('Approve failed: $e')),
@@ -99,7 +183,10 @@ class _JoinRequestsSection extends ConsumerWidget {
                 return Container(
                   height: 64,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
-                  margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                  margin: const EdgeInsets.symmetric(
+                    vertical: 6,
+                    horizontal: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: Theme.of(context).brightness == Brightness.light
                         ? Theme.of(context).colorScheme.surface
@@ -120,8 +207,8 @@ class _JoinRequestsSection extends ConsumerWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Theme.of(context).brightness ==
-                                    Brightness.light
+                            color:
+                                Theme.of(context).brightness == Brightness.light
                                 ? Theme.of(context).colorScheme.onSurface
                                 : Colors.white,
                             fontSize: 13,
@@ -140,8 +227,8 @@ class _JoinRequestsSection extends ConsumerWidget {
                       TextButton(
                         onPressed: () => approve(uid),
                         style: TextButton.styleFrom(
-                          foregroundColor: Theme.of(context).brightness ==
-                                  Brightness.light
+                          foregroundColor:
+                              Theme.of(context).brightness == Brightness.light
                               ? Theme.of(context).colorScheme.primary
                               : Colors.white,
                         ),
@@ -164,10 +251,25 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
   final _descCtrl = TextEditingController();
   final _memberSearchCtrl = TextEditingController();
   bool _rotatingInvite = false;
+  bool _uploadingPhoto = false;
+  String? _photoUrlOverride;
+  Uint8List? _photoBytesOverride;
+  String? _avatarFutureKey;
+  Future<ImageProvider?>? _avatarFuture;
   bool? _slowModeEnabledOverride;
   int? _slowModeDurationOverride;
+  bool _addingMembers = false;
   final Set<String> _optimisticallyRemovedMemberIds = <String>{};
   final Set<String> _removingMemberIds = <String>{};
+
+  Future<ImageProvider?> _avatarFutureFor(String? url) {
+    final key = (url ?? '').trim();
+    if (_avatarFuture == null || _avatarFutureKey != key) {
+      _avatarFutureKey = key;
+      _avatarFuture = _resolveGroupAvatar(key);
+    }
+    return _avatarFuture!;
+  }
 
   Map<String, bool> _permissionsFrom(Map<String, dynamic> groupData) {
     final settings = Map<String, dynamic>.from(
@@ -202,9 +304,9 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
 
   Future<void> _copyInviteLink({
     required Map<String, dynamic> groupData,
-    required String? inviteLink,
+    required String inviteLink,
   }) async {
-    if (inviteLink == null || inviteLink.trim().isEmpty) return;
+    if (inviteLink.trim().isEmpty) return;
     final canInvite = await _canManageInvites(groupData);
     if (!mounted) return;
     if (!canInvite) {
@@ -224,9 +326,9 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
 
   Future<void> _showInviteQr({
     required Map<String, dynamic> groupData,
-    required String? inviteLink,
+    required String inviteLink,
   }) async {
-    if (inviteLink == null || inviteLink.trim().isEmpty) return;
+    if (inviteLink.trim().isEmpty) return;
     final canInvite = await _canManageInvites(groupData);
     if (!mounted) return;
     if (!canInvite) {
@@ -438,6 +540,120 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
         });
   }
 
+  Future<void> _pickAndUploadGroupPhoto({required ImageSource source}) async {
+    if (_uploadingPhoto) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      setState(() => _uploadingPhoto = true);
+      final picker = ImagePicker();
+      final XFile? x = await picker.pickImage(
+        source: source,
+        maxWidth: 720,
+        maxHeight: 720,
+        imageQuality: 75,
+      );
+      if (x == null) return;
+      final bytes = await x.readAsBytes();
+      if (!mounted) return;
+      setState(() => _photoBytesOverride = Uint8List.fromList(bytes));
+      final path =
+          'group_avatars/${widget.chatId}_${DateTime.now().millisecondsSinceEpoch}.png';
+      final bucket = StorageService().profileBucket;
+      await StorageService().uploadBytes(
+        data: Uint8List.fromList(bytes),
+        bucket: bucket,
+        path: path,
+        contentType: 'image/png',
+      );
+      await FirestoreService().dmChats.doc(widget.chatId).set({
+        'photoUrl': path,
+      }, SetOptions(merge: true));
+      if (!mounted) return;
+      setState(() {
+        _photoBytesOverride = null;
+        _photoUrlOverride = path;
+      });
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Group photo updated')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Failed to update group photo: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
+    }
+  }
+
+  Future<void> _showGroupPhotoPicker(String? currentPhotoUrl) async {
+    final current = (currentPhotoUrl ?? '').trim();
+    final canRemove = current.isNotEmpty;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Camera'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndUploadGroupPhoto(source: ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Gallery'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndUploadGroupPhoto(source: ImageSource.gallery);
+              },
+            ),
+            if (canRemove) ...[
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Remove photo'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _removeGroupPhoto();
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _removeGroupPhoto() async {
+    if (_uploadingPhoto) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      setState(() => _uploadingPhoto = true);
+      await FirestoreService().dmChats.doc(widget.chatId).set({
+        'photoUrl': null,
+      }, SetOptions(merge: true));
+      if (!mounted) return;
+      setState(() {
+        _photoBytesOverride = null;
+        _photoUrlOverride = null;
+      });
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Group photo removed')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Failed to remove group photo: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
+    }
+  }
+
   Future<ImageProvider?> _resolveGroupAvatar(String? url) async {
     final raw = (url ?? '').trim();
     if (raw.isEmpty) return null;
@@ -508,6 +724,16 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
     return (data?['role'] as String?) ?? 'member';
   }
 
+  // ✅ Get active members (filtered by removedAt == null)
+  Stream<List<String>> _getActiveMemberIds() {
+    return FirestoreService().dmChats
+        .doc(widget.chatId)
+        .collection('members')
+        .where('removedAt', isNull: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) => doc.id).toList());
+  }
+
   Future<void> _setMute(Duration? duration) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
@@ -541,14 +767,9 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
     }
 
     try {
-      final chatRef = FirestoreService().dmChats.doc(widget.chatId);
-      await FirebaseFirestore.instance.runTransaction((tx) async {
-        tx.update(chatRef, {
-          'members': FieldValue.arrayRemove([uid]),
-          'memberCount': FieldValue.increment(-1),
-        });
-        tx.delete(chatRef.collection('members').doc(uid));
-      });
+      await ref
+          .read(groupModerationServiceProvider)
+          .leaveGroup(chatId: widget.chatId);
       if (!mounted) return;
       Navigator.pop(context);
     } catch (e) {
@@ -631,19 +852,29 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
   }
 
   Future<void> _openAddPeople(List<String> existing) async {
+    if (_addingMembers) return;
     final myRole = await _myRole();
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId != null) {
+      final roleDoc = await FirebaseFirestore.instance
+          .collection('dmChats')
+          .doc(widget.chatId)
+          .collection('members')
+          .doc(currentUserId)
+          .get();
+      debugPrint(
+        'MY ROLE: ${roleDoc.data()?['"'
+            "'role'"
+            '"']}',
+      );
+    }
     if (!mounted) return;
-    final chatSnap = await FirestoreService().dmChats.doc(widget.chatId).get();
-    final groupData = chatSnap.data() ?? const <String, dynamic>{};
-    final perms = _permissionsFrom(groupData);
-    final canAdd = myRole == 'owner' || myRole == 'admin'
-        ? true
-        : (perms['membersCanAddMembers'] == true);
+    final canAdd = myRole == 'owner' || myRole == 'admin';
     if (!canAdd) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('You do not have permission to add members'),
+          content: Text('You are not allowed to perform this action'),
         ),
       );
       return;
@@ -714,50 +945,92 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
 
     if (ok != true || selected.isEmpty) return;
 
+    if (mounted) {
+      setState(() => _addingMembers = true);
+    }
     try {
       final chatRef = FirestoreService().dmChats.doc(widget.chatId);
-      final requireApproval = perms['adminsCanApproveMembers'] == true;
       final isAdmin = myRole == 'owner' || myRole == 'admin';
+      if (!isAdmin) {
+        throw Exception('Not authorized');
+      }
 
-      if (requireApproval && !isAdmin) {
-        final batch = FirebaseFirestore.instance.batch();
-        for (final uid in selected) {
-          batch.set(chatRef.collection('pendingMembers').doc(uid), {
-            'userId': uid,
-            'requestedBy': FirebaseAuth.instance.currentUser?.uid,
-            'requestedAt': FieldValue.serverTimestamp(),
-          });
-        }
-        await batch.commit();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Request sent for admin approval')),
-        );
-      } else {
+      final myUid = FirebaseAuth.instance.currentUser?.uid;
+      if (myUid == null) throw Exception('Not authenticated');
+
+      // ✅ TRANSACTIONS: Atomic member additions (one per user)
+      for (final uid in selected) {
+        print("ADDING MEMBER: $uid by $myUid");
         await FirebaseFirestore.instance.runTransaction((tx) async {
-          tx.update(chatRef, {
-            'members': FieldValue.arrayUnion(selected.toList()),
-            'memberCount': FieldValue.increment(selected.length),
-          });
-          for (final uid in selected) {
-            tx.set(chatRef.collection('members').doc(uid), {
-              'userId': uid,
-              'role': 'member',
-              'joinedAt': FieldValue.serverTimestamp(),
-              'muteUntil': null,
-              'lastSentAt': null,
-              'isBanned': false,
-            });
+          final memberRef = chatRef.collection('members').doc(uid);
+          final memberSnap = await tx.get(memberRef);
 
-            tx.delete(chatRef.collection('pendingMembers').doc(uid));
+          // ✅ Prevent duplicate add
+          if (memberSnap.exists) {
+            print("User $uid already a member, skipping");
+            return;
           }
+
+          // ✅ Create member doc
+          tx.set(memberRef, {
+            'userId': uid,
+            'role': 'member',
+            'joinedAt': FieldValue.serverTimestamp(),
+            'removedAt': null,
+            'removeType': null,
+            'removedBy': null,
+            'muteUntil': null,
+            'lastSentAt': null,
+            'isBanned': false,
+            'bannedUntil': null,
+            'banReason': null,
+          });
+
+          // ✅ Update members array
+          tx.update(chatRef, {
+            'members': FieldValue.arrayUnion([uid]),
+            'memberCount': FieldValue.increment(1),
+          });
         });
+      }
+
+      // ✅ SECONDARY: Delete pending member requests (silent)
+      for (final uid in selected) {
+        try {
+          await chatRef.collection('pendingMembers').doc(uid).delete();
+        } catch (e) {
+          print("PENDING DELETE FAILED for $uid: $e");
+        }
+      }
+
+      // ✅ SECONDARY: Create system messages (silent)
+      final moderationService = GroupModerationService(FirestoreService());
+      for (final uid in selected) {
+        try {
+          await moderationService.writeSystemMessageWithNames(
+            chatId: widget.chatId,
+            action: 'member_added',
+            actorId: myUid,
+            targetId: uid,
+            buildText: (actorName, targetName) {
+              final t = targetName ?? uid;
+              return '$t was added by $actorName';
+            },
+          );
+        } catch (e) {
+          print("SYSTEM MESSAGE FAILED for $uid: $e");
+        }
       }
     } on FirebaseException catch (e) {
       if (!mounted) return;
-      if (e.code == 'permission-denied') {
+      final isPermissionError =
+          e.code == 'permission-denied' ||
+          e.toString().toLowerCase().contains('permission');
+      if (isPermissionError) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Missing permissions to add members')),
+          const SnackBar(
+            content: Text('You are not allowed to perform this action'),
+          ),
         );
         return;
       }
@@ -769,6 +1042,10 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Add members failed: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _addingMembers = false);
+      }
     }
   }
 
@@ -780,660 +1057,769 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
     }
 
     final fs = FirestoreService();
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: fs.dmChats.doc(widget.chatId).snapshots(),
-      builder: (context, snap) {
-        final theme = Theme.of(context);
-        final isLight = theme.brightness == Brightness.light;
-        final data = snap.data?.data() ?? const <String, dynamic>{};
-        final name = ((data['name'] as String?) ?? 'Group').trim();
-        final description = ((data['description'] as String?) ?? '').trim();
-        final photoUrl = (data['photoUrl'] as String?)?.trim();
-        final members = List<String>.from(
-          (data['members'] as List?) ?? const [],
-        );
-        final invite = Map<String, dynamic>.from(
-          (data['invite'] as Map?) ?? const {},
-        );
-        final code = (invite['code'] as String?)?.trim();
-        final revoked = (invite['revoked'] as bool?) ?? false;
-
-        if (_nameCtrl.text.isEmpty) _nameCtrl.text = name;
-        if (_descCtrl.text.isEmpty) _descCtrl.text = description;
-
-        final inviteLink = (code == null || code.isEmpty || revoked)
-            ? null
-            : 'https://yourapp.com/join/$code';
-
-        Future<void> handleMenu(String v) async {
-          if (v == 'edit_name') {
-            await _editTextField(
-              title: 'Group name',
-              controller: _nameCtrl,
-              maxLines: 1,
-              groupData: data,
+    return StreamBuilder<List<String>>(
+      stream: _getActiveMemberIds(),
+      builder: (context, activeMembersSnap) {
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: fs.dmChats.doc(widget.chatId).snapshots(),
+          builder: (context, snap) {
+            final theme = Theme.of(context);
+            final isLight = theme.brightness == Brightness.light;
+            final data = snap.data?.data() ?? const <String, dynamic>{};
+            final name = ((data['name'] as String?) ?? 'Group').trim();
+            final description = ((data['description'] as String?) ?? '').trim();
+            final photoUrl = (data['photoUrl'] as String?)?.trim();
+            final activeMembers = activeMembersSnap.data ?? const [];
+            final invite = Map<String, dynamic>.from(
+              (data['invite'] as Map?) ?? const {},
             );
-          } else if (v == 'edit_desc') {
-            await _editTextField(
-              title: 'Group description',
-              controller: _descCtrl,
-              maxLines: 3,
-              groupData: data,
-            );
-          } else if (v == 'invite') {
-            await _rotateInvite(groupData: data);
-          } else if (v == 'leave') {
-            await _leaveGroup();
-          } else if (v == 'delete') {
-            await _deleteGroup();
-          }
-        }
+            final code = (invite['code'] as String?)?.trim();
+            final revoked = (invite['revoked'] as bool?) ?? false;
 
-        final visibleMembers = members
-            .where((id) => !_optimisticallyRemovedMemberIds.contains(id))
-            .toList(growable: false);
+            if (_nameCtrl.text.isEmpty) _nameCtrl.text = name;
+            if (_descCtrl.text.isEmpty) _descCtrl.text = description;
 
-        return Scaffold(
-          backgroundColor: isLight
-              ? theme.colorScheme.background
-              : theme.scaffoldBackgroundColor,
-          appBar: PreferredSize(
-            preferredSize: const Size.fromHeight(52),
-            child: AppBar(
-              toolbarHeight: 52,
+            final inviteLink = (code == null || code.isEmpty || revoked)
+                ? null
+                : 'https://yourapp.com/join/$code';
+
+            Future<void> handleMenu(String v) async {
+              if (v == 'edit_name') {
+                await _editTextField(
+                  title: 'Group name',
+                  controller: _nameCtrl,
+                  maxLines: 1,
+                  groupData: data,
+                );
+              } else if (v == 'edit_desc') {
+                await _editTextField(
+                  title: 'Group description',
+                  controller: _descCtrl,
+                  maxLines: 3,
+                  groupData: data,
+                );
+              } else if (v == 'invite') {
+                await _rotateInvite(groupData: data);
+              } else if (v == 'leave') {
+                await _leaveGroup();
+              } else if (v == 'delete') {
+                await _deleteGroup();
+              }
+            }
+
+            final visibleMembers = activeMembers
+                .where((id) => !_optimisticallyRemovedMemberIds.contains(id))
+                .toList(growable: false);
+
+            return Scaffold(
               backgroundColor: isLight
                   ? theme.colorScheme.background
                   : theme.scaffoldBackgroundColor,
-              elevation: 0,
-              centerTitle: true,
-              title: Text(
-                'Group Info',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: isLight
-                      ? theme.colorScheme.onBackground
-                      : Colors.white,
-                ),
-              ),
-              iconTheme: IconThemeData(
-                size: 20,
-                color: isLight
-                    ? theme.colorScheme.onBackground
-                    : const Color(0xFFA0A0A0),
-              ),
-              actions: [
-                IconButton(
-                  tooltip: 'Search members',
-                  onPressed: () {
-                    FocusScope.of(context).requestFocus(FocusNode());
-                    _memberSearchCtrl.selection = TextSelection.fromPosition(
-                      TextPosition(offset: _memberSearchCtrl.text.length),
-                    );
-                  },
-                  icon: const Icon(Icons.search_rounded),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: GlassDropdown(
-                    items: [
-                      const GlassDropdownItem(
-                        value: 'edit_name',
-                        label: 'Edit name',
-                        icon: Icons.edit,
-                      ),
-                      const GlassDropdownItem(
-                        value: 'edit_desc',
-                        label: 'Edit description',
-                        icon: Icons.description,
-                      ),
-                      const GlassDropdownItem(
-                        value: 'invite',
-                        label: 'Invite link',
-                        icon: Icons.link,
-                      ),
-                      const GlassDropdownItem(
-                        value: 'leave',
-                        label: 'Leave group',
-                        icon: Icons.logout,
-                        isDestructive: true,
-                      ),
-                      const GlassDropdownItem(
-                        value: 'delete',
-                        label: 'Delete group',
-                        icon: Icons.delete_forever,
-                        isDestructive: true,
-                      ),
-                    ],
-                    onSelected: (v) async => handleMenu(v),
-                    child: Icon(
-                      Icons.more_vert_rounded,
+              appBar: PreferredSize(
+                preferredSize: const Size.fromHeight(52),
+                child: AppBar(
+                  toolbarHeight: 52,
+                  backgroundColor: isLight
+                      ? theme.colorScheme.background
+                      : theme.scaffoldBackgroundColor,
+                  elevation: 0,
+                  centerTitle: true,
+                  title: Text(
+                    'Group Info',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                       color: isLight
                           ? theme.colorScheme.onBackground
-                          : const Color(0xFFA0A0A0),
+                          : Colors.white,
                     ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          body: FutureBuilder<String?>(
-            future: _myRole(),
-            builder: (context, roleSnap) {
-              final role = roleSnap.data;
-              final perms = _permissionsFrom(data);
-              final isAdmin = role == 'owner' || role == 'admin';
-              final isOwner = role == 'owner';
-              final canEditInfo = role == 'owner' || role == 'admin'
-                  ? true
-                  : (perms['membersCanEditSettings'] == true);
-              final canAddMembers = role == 'owner' || role == 'admin'
-                  ? true
-                  : (perms['membersCanAddMembers'] == true);
-
-              final moderation = Map<String, dynamic>.from(
-                (data['moderation'] as Map?) ?? const {},
-              );
-              final remoteSlowEnabled =
-                  (moderation['slowModeEnabled'] as bool?) ?? false;
-              final remoteSlowDuration =
-                  (moderation['slowModeDurationSec'] as int?) ?? 0;
-
-              final slowModeEnabled =
-                  _slowModeEnabledOverride ?? remoteSlowEnabled;
-              final slowModeDurationSec =
-                  _slowModeDurationOverride ?? remoteSlowDuration;
-
-              if (_slowModeEnabledOverride != null &&
-                  _slowModeEnabledOverride == remoteSlowEnabled &&
-                  (_slowModeDurationOverride ?? 0) == remoteSlowDuration) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  if (_slowModeEnabledOverride == null &&
-                      _slowModeDurationOverride == null) {
-                    return;
-                  }
-                  setState(() {
-                    _slowModeEnabledOverride = null;
-                    _slowModeDurationOverride = null;
-                  });
-                });
-              }
-
-              return CustomScrollView(
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 24, bottom: 14),
-                      child: Column(
-                        children: [
-                          FutureBuilder<ImageProvider?>(
-                            future: _resolveGroupAvatar(photoUrl),
-                            builder: (context, imgSnap) {
-                              final img = imgSnap.data;
-                              return _GroupAvatar84(image: img, name: name);
-                            },
+                  iconTheme: IconThemeData(
+                    size: 20,
+                    color: isLight
+                        ? theme.colorScheme.onBackground
+                        : const Color(0xFFA0A0A0),
+                  ),
+                  actions: [
+                    IconButton(
+                      tooltip: 'Search members',
+                      onPressed: () {
+                        FocusScope.of(context).requestFocus(FocusNode());
+                        _memberSearchCtrl
+                            .selection = TextSelection.fromPosition(
+                          TextPosition(offset: _memberSearchCtrl.text.length),
+                        );
+                      },
+                      icon: const Icon(Icons.search_rounded),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: GlassDropdown(
+                        items: [
+                          const GlassDropdownItem(
+                            value: 'edit_name',
+                            label: 'Edit name',
+                            icon: Icons.edit,
                           ),
-                          const SizedBox(height: 10),
-                          _EditableTitle(
-                            text: name,
-                            enabled: canEditInfo,
-                            onEdit: () => _editTextField(
-                              title: 'Group name',
-                              controller: _nameCtrl,
-                              maxLines: 1,
-                              groupData: data,
-                            ),
+                          const GlassDropdownItem(
+                            value: 'edit_desc',
+                            label: 'Edit description',
+                            icon: Icons.description,
                           ),
-                          const SizedBox(height: 10),
-                          _EditableDescription(
-                            text: description.isEmpty
-                                ? 'Add a group description'
-                                : description,
-                            enabled: canEditInfo,
-                            isPlaceholder: description.isEmpty,
-                            onEdit: () => _editTextField(
-                              title: 'Group description',
-                              controller: _descCtrl,
-                              maxLines: 3,
-                              groupData: data,
-                            ),
+                          const GlassDropdownItem(
+                            value: 'invite',
+                            label: 'Invite link',
+                            icon: Icons.link,
                           ),
-                          const SizedBox(height: 10),
-                          Text(
-                            '${members.length} members',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: isLight
-                                  ? theme.colorScheme.primary
-                                  : const Color(0xFF8A8A8A),
-                            ),
+                          const GlassDropdownItem(
+                            value: 'leave',
+                            label: 'Leave group',
+                            icon: Icons.logout,
+                            isDestructive: true,
                           ),
-                          const SizedBox(height: 16),
-                          _QuickActionsRow(
-                            onCall: () {},
-                            onSearchMessages: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Search coming soon'),
-                                ),
-                              );
-                            },
-                            onMute: () async {
-                              final chosen =
-                                  await showModalBottomSheet<Duration?>(
-                                    context: context,
-                                    builder: (ctx) => SafeArea(
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          ListTile(
-                                            leading: const Icon(
-                                              Icons.volume_off_outlined,
-                                            ),
-                                            title: const Text('Mute 8 hours'),
-                                            onTap: () => Navigator.pop(
-                                              ctx,
-                                              const Duration(hours: 8),
-                                            ),
-                                          ),
-                                          ListTile(
-                                            leading: const Icon(
-                                              Icons.volume_off_outlined,
-                                            ),
-                                            title: const Text('Mute 1 week'),
-                                            onTap: () => Navigator.pop(
-                                              ctx,
-                                              const Duration(days: 7),
-                                            ),
-                                          ),
-                                          ListTile(
-                                            leading: const Icon(
-                                              Icons.volume_off_outlined,
-                                            ),
-                                            title: const Text('Mute forever'),
-                                            onTap: () => Navigator.pop(
-                                              ctx,
-                                              const Duration(days: 3650),
-                                            ),
-                                          ),
-                                          ListTile(
-                                            leading: const Icon(
-                                              Icons.volume_up_outlined,
-                                            ),
-                                            title: const Text('Unmute'),
-                                            onTap: () =>
-                                                Navigator.pop(ctx, null),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                              await _setMute(chosen);
-                            },
-                            onAddMember: canAddMembers
-                                ? () => _openAddPeople(members)
-                                : () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'You do not have permission to add members',
-                                        ),
-                                      ),
-                                    );
-                                  },
+                          const GlassDropdownItem(
+                            value: 'delete',
+                            label: 'Delete group',
+                            icon: Icons.delete_forever,
+                            isDestructive: true,
                           ),
                         ],
+                        onSelected: (v) async => handleMenu(v),
+                        child: Icon(
+                          Icons.more_vert_rounded,
+                          color: isLight
+                              ? theme.colorScheme.onBackground
+                              : const Color(0xFFA0A0A0),
+                        ),
                       ),
                     ),
-                  ),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 6),
-                          const _SectionHeader(title: 'Pinned Messages'),
-                          const SizedBox(height: 10),
-                          const _EmptyCard(text: 'No pinned messages'),
-                          const SizedBox(height: 18),
-                          _MediaAndFilesPreview(chatId: widget.chatId),
-                          const SizedBox(height: 18),
-                          _MembersSection(
-                            chatId: widget.chatId,
-                            memberIds: visibleMembers,
-                            canManage: isAdmin,
-                            myRole: role,
-                            onAdd: canAddMembers
-                                ? () => _openAddPeople(members)
-                                : null,
-                            controller: _memberSearchCtrl,
-                            onOptimisticRemove: (targetUid) {
-                              if (_optimisticallyRemovedMemberIds.contains(
-                                targetUid,
-                              )) {
-                                return;
-                              }
-                              setState(() {
-                                _removingMemberIds.add(targetUid);
-                              });
+                  ],
+                ),
+              ),
+              body: FutureBuilder<String?>(
+                future: _myRole(),
+                builder: (context, roleSnap) {
+                  final role = roleSnap.data;
+                  final perms = _permissionsFrom(data);
+                  final isAdmin = role == 'owner' || role == 'admin';
+                  final isOwner = role == 'owner';
+                  final canEditInfo = role == 'owner' || role == 'admin'
+                      ? true
+                      : (perms['membersCanEditSettings'] == true);
+                  final canAddMembers = role == 'owner' || role == 'admin'
+                      ? true
+                      : (perms['membersCanAddMembers'] == true);
 
-                              Future.delayed(
-                                const Duration(milliseconds: 220),
-                                () {
+                  final moderation = Map<String, dynamic>.from(
+                    (data['moderation'] as Map?) ?? const {},
+                  );
+                  final remoteSlowEnabled =
+                      (moderation['slowModeEnabled'] as bool?) ?? false;
+                  final remoteSlowDuration =
+                      (moderation['slowModeDurationSec'] as int?) ?? 0;
+
+                  final slowModeEnabled =
+                      _slowModeEnabledOverride ?? remoteSlowEnabled;
+                  final slowModeDurationSec =
+                      _slowModeDurationOverride ?? remoteSlowDuration;
+
+                  if (_slowModeEnabledOverride != null &&
+                      _slowModeEnabledOverride == remoteSlowEnabled &&
+                      (_slowModeDurationOverride ?? 0) == remoteSlowDuration) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!mounted) return;
+                      if (_slowModeEnabledOverride == null &&
+                          _slowModeDurationOverride == null) {
+                        return;
+                      }
+                      setState(() {
+                        _slowModeEnabledOverride = null;
+                        _slowModeDurationOverride = null;
+                      });
+                    });
+                  }
+
+                  return CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 24, bottom: 14),
+                          child: Column(
+                            children: [
+                              FutureBuilder<ImageProvider?>(
+                                future: _photoBytesOverride != null
+                                    ? Future.value(
+                                        MemoryImage(_photoBytesOverride!),
+                                      )
+                                    : _avatarFutureFor(
+                                        _photoUrlOverride ?? photoUrl,
+                                      ),
+                                builder: (context, imgSnap) {
+                                  final img = imgSnap.data;
+                                  final avatar = _GroupAvatar84(
+                                    image: img,
+                                    name: name,
+                                  );
+                                  if (!canEditInfo) return avatar;
+                                  return GestureDetector(
+                                    onTap: _uploadingPhoto
+                                        ? null
+                                        : () => _showGroupPhotoPicker(
+                                            _photoUrlOverride ?? photoUrl,
+                                          ),
+                                    child: Stack(
+                                      alignment: Alignment.center,
+                                      children: [
+                                        avatar,
+                                        Positioned(
+                                          right: 0,
+                                          bottom: 0,
+                                          child: Container(
+                                            width: 26,
+                                            height: 26,
+                                            decoration: BoxDecoration(
+                                              color: isLight
+                                                  ? theme.colorScheme.surface
+                                                  : const Color(0xFF1A1A1A),
+                                              borderRadius:
+                                                  BorderRadius.circular(13),
+                                              border: Border.all(
+                                                color: isLight
+                                                    ? Colors.black.withOpacity(
+                                                        0.08,
+                                                      )
+                                                    : const Color(0xFF2A2A2A),
+                                                width: 1,
+                                              ),
+                                            ),
+                                            child: Icon(
+                                              Icons.camera_alt_outlined,
+                                              size: 14,
+                                              color: isLight
+                                                  ? theme.colorScheme.onSurface
+                                                        .withOpacity(0.8)
+                                                  : Colors.white70,
+                                            ),
+                                          ),
+                                        ),
+                                        if (_uploadingPhoto)
+                                          Container(
+                                            width: 84,
+                                            height: 84,
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withOpacity(
+                                                0.35,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(42),
+                                            ),
+                                            child: const Center(
+                                              child: SizedBox(
+                                                width: 22,
+                                                height: 22,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  valueColor:
+                                                      AlwaysStoppedAnimation<
+                                                        Color
+                                                      >(Colors.white),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 10),
+                              _EditableTitle(
+                                text: name,
+                                enabled: canEditInfo,
+                                onEdit: () => _editTextField(
+                                  title: 'Group name',
+                                  controller: _nameCtrl,
+                                  maxLines: 1,
+                                  groupData: data,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              _EditableDescription(
+                                text: description.isEmpty
+                                    ? 'Add a group description'
+                                    : description,
+                                enabled: canEditInfo,
+                                isPlaceholder: description.isEmpty,
+                                onEdit: () => _editTextField(
+                                  title: 'Group description',
+                                  controller: _descCtrl,
+                                  maxLines: 3,
+                                  groupData: data,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                '${activeMembers.length} members',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: isLight
+                                      ? theme.colorScheme.primary
+                                      : const Color(0xFF8A8A8A),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              _QuickActionsRow(
+                                onCall: () {},
+                                onSearchMessages: () {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Search coming soon'),
+                                    ),
+                                  );
+                                },
+                                onMute: () async {
+                                  final chosen =
+                                      await showModalBottomSheet<Duration?>(
+                                        context: context,
+                                        builder: (ctx) => SafeArea(
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              ListTile(
+                                                leading: const Icon(
+                                                  Icons.volume_off_outlined,
+                                                ),
+                                                title: const Text(
+                                                  'Mute 8 hours',
+                                                ),
+                                                onTap: () => Navigator.pop(
+                                                  ctx,
+                                                  const Duration(hours: 8),
+                                                ),
+                                              ),
+                                              ListTile(
+                                                leading: const Icon(
+                                                  Icons.volume_off_outlined,
+                                                ),
+                                                title: const Text(
+                                                  'Mute 1 week',
+                                                ),
+                                                onTap: () => Navigator.pop(
+                                                  ctx,
+                                                  const Duration(days: 7),
+                                                ),
+                                              ),
+                                              ListTile(
+                                                leading: const Icon(
+                                                  Icons.volume_off_outlined,
+                                                ),
+                                                title: const Text(
+                                                  'Mute forever',
+                                                ),
+                                                onTap: () => Navigator.pop(
+                                                  ctx,
+                                                  const Duration(days: 3650),
+                                                ),
+                                              ),
+                                              ListTile(
+                                                leading: const Icon(
+                                                  Icons.volume_up_outlined,
+                                                ),
+                                                title: const Text('Unmute'),
+                                                onTap: () =>
+                                                    Navigator.pop(ctx, null),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                  await _setMute(chosen);
+                                },
+                                onAddMember: canAddMembers
+                                    ? () => _openAddPeople(activeMembers)
+                                    : () {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'You are not allowed to perform this action',
+                                            ),
+                                          ),
+                                        );
+                                      },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 6),
+                              const _SectionHeader(title: 'Pinned Messages'),
+                              const SizedBox(height: 10),
+                              const _EmptyCard(text: 'No pinned messages'),
+                              const SizedBox(height: 18),
+                              _MediaAndFilesPreview(chatId: widget.chatId),
+                              const SizedBox(height: 18),
+                              _MembersSection(
+                                chatId: widget.chatId,
+                                memberIds: visibleMembers,
+                                canManage: isAdmin,
+                                myRole: role,
+                                onAdd: canAddMembers
+                                    ? () => _openAddPeople(activeMembers)
+                                    : null,
+                                controller: _memberSearchCtrl,
+                                onOptimisticRemove: (targetUid) {
+                                  if (_optimisticallyRemovedMemberIds.contains(
+                                    targetUid,
+                                  )) {
+                                    return;
+                                  }
+                                  setState(() {
+                                    _removingMemberIds.add(targetUid);
+                                  });
+
+                                  Future.delayed(
+                                    const Duration(milliseconds: 220),
+                                    () {
+                                      if (!mounted) return;
+                                      setState(() {
+                                        _removingMemberIds.remove(targetUid);
+                                        _optimisticallyRemovedMemberIds.add(
+                                          targetUid,
+                                        );
+                                      });
+                                    },
+                                  );
+                                },
+                                onOptimisticRemoveRollback: (targetUid) {
                                   if (!mounted) return;
                                   setState(() {
                                     _removingMemberIds.remove(targetUid);
-                                    _optimisticallyRemovedMemberIds.add(
+                                    _optimisticallyRemovedMemberIds.remove(
                                       targetUid,
                                     );
                                   });
                                 },
-                              );
-                            },
-                            onOptimisticRemoveRollback: (targetUid) {
-                              if (!mounted) return;
-                              setState(() {
-                                _removingMemberIds.remove(targetUid);
-                                _optimisticallyRemovedMemberIds.remove(
-                                  targetUid,
-                                );
-                              });
-                            },
-                            isRemoving: (uid) =>
-                                _removingMemberIds.contains(uid),
-                          ),
-                          if ((perms['adminsCanApproveMembers'] == true) &&
-                              isAdmin) ...[
-                            const SizedBox(height: 18),
-                            _JoinRequestsSection(chatId: widget.chatId),
-                          ],
-                          const SizedBox(height: 18),
-                          const _SectionHeader(title: 'Moderation'),
-                          const SizedBox(height: 10),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(12),
-                            margin: const EdgeInsets.symmetric(
-                              vertical: 6,
-                              horizontal: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isLight
-                                  ? theme.colorScheme.surface
-                                  : const Color(0xFF111111),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: isLight
-                                    ? Colors.black.withOpacity(0.05)
-                                    : const Color(0xFF222222),
-                                width: 1,
+                                isRemoving: (uid) =>
+                                    _removingMemberIds.contains(uid),
                               ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        'Slow Mode',
-                                        style: TextStyle(
-                                          color: isLight
-                                              ? theme.colorScheme.onSurface
-                                              : Colors.white,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                    Switch(
-                                      value: slowModeEnabled,
-                                      activeColor: theme.colorScheme.primary,
-                                      onChanged: !isAdmin
-                                          ? null
-                                          : (v) {
-                                              final nextDur =
-                                                  slowModeDurationSec <= 0
-                                                  ? 10
-                                                  : slowModeDurationSec;
-                                              _setSlowMode(
-                                                enabled: v,
-                                                durationSec: nextDur,
-                                              );
-                                            },
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 10),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: [
-                                    _SlowModeChip(
-                                      label: '5s',
-                                      selected:
-                                          slowModeEnabled &&
-                                          slowModeDurationSec == 5,
-                                      enabled: isAdmin && slowModeEnabled,
-                                      onTap: () => _setSlowMode(
-                                        enabled: true,
-                                        durationSec: 5,
-                                      ),
-                                    ),
-                                    _SlowModeChip(
-                                      label: '10s',
-                                      selected:
-                                          slowModeEnabled &&
-                                          slowModeDurationSec == 10,
-                                      enabled: isAdmin && slowModeEnabled,
-                                      onTap: () => _setSlowMode(
-                                        enabled: true,
-                                        durationSec: 10,
-                                      ),
-                                    ),
-                                    _SlowModeChip(
-                                      label: '30s',
-                                      selected:
-                                          slowModeEnabled &&
-                                          slowModeDurationSec == 30,
-                                      enabled: isAdmin && slowModeEnabled,
-                                      onTap: () => _setSlowMode(
-                                        enabled: true,
-                                        durationSec: 30,
-                                      ),
-                                    ),
-                                    _SlowModeChip(
-                                      label: '1m',
-                                      selected:
-                                          slowModeEnabled &&
-                                          slowModeDurationSec == 60,
-                                      enabled: isAdmin && slowModeEnabled,
-                                      onTap: () => _setSlowMode(
-                                        enabled: true,
-                                        durationSec: 60,
-                                      ),
-                                    ),
-                                    _SlowModeChip(
-                                      label: '5m',
-                                      selected:
-                                          slowModeEnabled &&
-                                          slowModeDurationSec == 300,
-                                      enabled: isAdmin && slowModeEnabled,
-                                      onTap: () => _setSlowMode(
-                                        enabled: true,
-                                        durationSec: 300,
-                                      ),
-                                    ),
-                                    _SlowModeChip(
-                                      label: '15m',
-                                      selected:
-                                          slowModeEnabled &&
-                                          slowModeDurationSec == 900,
-                                      enabled: isAdmin && slowModeEnabled,
-                                      onTap: () => _setSlowMode(
-                                        enabled: true,
-                                        durationSec: 900,
-                                      ),
-                                    ),
-                                    _SlowModeChip(
-                                      label: 'Custom',
-                                      selected: false,
-                                      enabled: isAdmin && slowModeEnabled,
-                                      onTap: () async {
-                                        final ctrl = TextEditingController();
-                                        final raw = await showDialog<String>(
-                                          context: context,
-                                          builder: (ctx) => AlertDialog(
-                                            title: const Text(
-                                              'Custom slow mode (seconds)',
-                                            ),
-                                            content: TextField(
-                                              controller: ctrl,
-                                              keyboardType:
-                                                  TextInputType.number,
-                                            ),
-                                            actions: [
-                                              TextButton(
-                                                onPressed: () =>
-                                                    Navigator.pop(ctx),
-                                                child: const Text('Cancel'),
-                                              ),
-                                              TextButton(
-                                                onPressed: () => Navigator.pop(
-                                                  ctx,
-                                                  ctrl.text.trim(),
-                                                ),
-                                                child: const Text('Set'),
-                                              ),
-                                            ],
-                                          ),
-                                        );
-                                        if (raw == null) return;
-                                        final sec = int.tryParse(raw) ?? 0;
-                                        if (sec <= 0) return;
-                                        _setSlowMode(
-                                          enabled: true,
-                                          durationSec: sec,
-                                        );
-                                      },
-                                    ),
-                                  ],
-                                ),
-                                if (!isAdmin)
-                                  Padding(
-                                    padding: EdgeInsets.only(top: 10),
-                                    child: Text(
-                                      'Only admins can change moderation settings',
-                                      style: TextStyle(
-                                        color: isLight
-                                            ? theme.colorScheme.onSurface
-                                                  .withOpacity(0.6)
-                                            : const Color(0xFF8A8A8A),
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ),
+                              if ((perms['adminsCanApproveMembers'] == true) &&
+                                  isAdmin) ...[
+                                const SizedBox(height: 18),
+                                _JoinRequestsSection(chatId: widget.chatId),
                               ],
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          const _SectionHeader(title: 'Group Settings'),
-                          const SizedBox(height: 10),
-                          _SettingsTile(
-                            icon: Icons.edit,
-                            title: 'Edit group name',
-                            onTap: canEditInfo
-                                ? () => _editTextField(
-                                    title: 'Group name',
-                                    controller: _nameCtrl,
-                                    maxLines: 1,
-                                    groupData: data,
-                                  )
-                                : null,
-                          ),
-                          _SettingsTile(
-                            icon: Icons.description_outlined,
-                            title: 'Edit description',
-                            onTap: canEditInfo
-                                ? () => _editTextField(
-                                    title: 'Group description',
-                                    controller: _descCtrl,
-                                    maxLines: 3,
-                                    groupData: data,
-                                  )
-                                : null,
-                          ),
-                          _SettingsTile(
-                            icon: Icons.admin_panel_settings_outlined,
-                            title: 'Manage admins',
-                            onTap: !isOwner
-                                ? null
-                                : () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Manage admins from member list',
+                              const SizedBox(height: 18),
+                              const _SectionHeader(title: 'Moderation'),
+                              const SizedBox(height: 10),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                margin: const EdgeInsets.symmetric(
+                                  vertical: 6,
+                                  horizontal: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isLight
+                                      ? theme.colorScheme.surface
+                                      : const Color(0xFF111111),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: isLight
+                                        ? Colors.black.withOpacity(0.05)
+                                        : const Color(0xFF222222),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            'Slow Mode',
+                                            style: TextStyle(
+                                              color: isLight
+                                                  ? theme.colorScheme.onSurface
+                                                  : Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        Switch(
+                                          value: slowModeEnabled,
+                                          activeColor:
+                                              theme.colorScheme.primary,
+                                          onChanged: !isAdmin
+                                              ? null
+                                              : (v) {
+                                                  final nextDur =
+                                                      slowModeDurationSec <= 0
+                                                      ? 10
+                                                      : slowModeDurationSec;
+                                                  _setSlowMode(
+                                                    enabled: v,
+                                                    durationSec: nextDur,
+                                                  );
+                                                },
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
+                                      children: [
+                                        _SlowModeChip(
+                                          label: '5s',
+                                          selected:
+                                              slowModeEnabled &&
+                                              slowModeDurationSec == 5,
+                                          enabled: isAdmin && slowModeEnabled,
+                                          onTap: () => _setSlowMode(
+                                            enabled: true,
+                                            durationSec: 5,
+                                          ),
+                                        ),
+                                        _SlowModeChip(
+                                          label: '10s',
+                                          selected:
+                                              slowModeEnabled &&
+                                              slowModeDurationSec == 10,
+                                          enabled: isAdmin && slowModeEnabled,
+                                          onTap: () => _setSlowMode(
+                                            enabled: true,
+                                            durationSec: 10,
+                                          ),
+                                        ),
+                                        _SlowModeChip(
+                                          label: '30s',
+                                          selected:
+                                              slowModeEnabled &&
+                                              slowModeDurationSec == 30,
+                                          enabled: isAdmin && slowModeEnabled,
+                                          onTap: () => _setSlowMode(
+                                            enabled: true,
+                                            durationSec: 30,
+                                          ),
+                                        ),
+                                        _SlowModeChip(
+                                          label: '1m',
+                                          selected:
+                                              slowModeEnabled &&
+                                              slowModeDurationSec == 60,
+                                          enabled: isAdmin && slowModeEnabled,
+                                          onTap: () => _setSlowMode(
+                                            enabled: true,
+                                            durationSec: 60,
+                                          ),
+                                        ),
+                                        _SlowModeChip(
+                                          label: '5m',
+                                          selected:
+                                              slowModeEnabled &&
+                                              slowModeDurationSec == 300,
+                                          enabled: isAdmin && slowModeEnabled,
+                                          onTap: () => _setSlowMode(
+                                            enabled: true,
+                                            durationSec: 300,
+                                          ),
+                                        ),
+                                        _SlowModeChip(
+                                          label: '15m',
+                                          selected:
+                                              slowModeEnabled &&
+                                              slowModeDurationSec == 900,
+                                          enabled: isAdmin && slowModeEnabled,
+                                          onTap: () => _setSlowMode(
+                                            enabled: true,
+                                            durationSec: 900,
+                                          ),
+                                        ),
+                                        _SlowModeChip(
+                                          label: 'Custom',
+                                          selected: false,
+                                          enabled: isAdmin && slowModeEnabled,
+                                          onTap: () async {
+                                            final ctrl =
+                                                TextEditingController();
+                                            final raw = await showDialog<String>(
+                                              context: context,
+                                              builder: (ctx) => AlertDialog(
+                                                title: const Text(
+                                                  'Custom slow mode (seconds)',
+                                                ),
+                                                content: TextField(
+                                                  controller: ctrl,
+                                                  keyboardType:
+                                                      TextInputType.number,
+                                                ),
+                                                actions: [
+                                                  TextButton(
+                                                    onPressed: () =>
+                                                        Navigator.pop(ctx),
+                                                    child: const Text('Cancel'),
+                                                  ),
+                                                  TextButton(
+                                                    onPressed: () =>
+                                                        Navigator.pop(
+                                                          ctx,
+                                                          ctrl.text.trim(),
+                                                        ),
+                                                    child: const Text('Set'),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                            if (raw == null) return;
+                                            final sec = int.tryParse(raw) ?? 0;
+                                            const maxSeconds =
+                                                300; // 5 minutes max
+                                            if (sec <= 0 || sec > maxSeconds) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    'Please enter a value between 1 and ${maxSeconds}s (5 minutes)',
+                                                  ),
+                                                ),
+                                              );
+                                              return;
+                                            }
+                                            _setSlowMode(
+                                              enabled: true,
+                                              durationSec: sec,
+                                            );
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                    if (!isAdmin)
+                                      Padding(
+                                        padding: EdgeInsets.only(top: 10),
+                                        child: Text(
+                                          'Only admins can change moderation settings',
+                                          style: TextStyle(
+                                            color: isLight
+                                                ? theme.colorScheme.onSurface
+                                                      .withOpacity(0.6)
+                                                : const Color(0xFF8A8A8A),
+                                            fontSize: 12,
+                                          ),
                                         ),
                                       ),
-                                    );
-                                  },
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+                              _SettingsTile(
+                                icon: Icons.dashboard_outlined,
+                                title: 'Moderation Dashboard',
+                                onTap: isAdmin
+                                    ? () => Navigator.pushNamed(
+                                        context,
+                                        '/moderation-dashboard',
+                                        arguments: {'chatId': widget.chatId},
+                                      )
+                                    : null,
+                              ),
+                              const SizedBox(height: 18),
+                              const _SectionHeader(title: 'Group Settings'),
+                              const SizedBox(height: 10),
+                              _SettingsTile(
+                                icon: Icons.edit,
+                                title: 'Edit group name',
+                                onTap: canEditInfo
+                                    ? () => _editTextField(
+                                        title: 'Group name',
+                                        controller: _nameCtrl,
+                                        maxLines: 1,
+                                        groupData: data,
+                                      )
+                                    : null,
+                              ),
+                              _SettingsTile(
+                                icon: Icons.description_outlined,
+                                title: 'Edit description',
+                                onTap: canEditInfo
+                                    ? () => _editTextField(
+                                        title: 'Group description',
+                                        controller: _descCtrl,
+                                        maxLines: 3,
+                                        groupData: data,
+                                      )
+                                    : null,
+                              ),
+                              _SettingsTile(
+                                icon: Icons.admin_panel_settings_outlined,
+                                title: 'Manage admins',
+                                onTap: null,
+                              ),
+                              _SettingsTile(
+                                icon: Icons.link,
+                                title: 'Invite link',
+                                onTap: () => _rotateInvite(groupData: data),
+                              ),
+                              _SettingsTile(
+                                icon: Icons.tune,
+                                title: 'Group permissions',
+                                onTap: () => Navigator.pushNamed(
+                                  context,
+                                  GroupPermissionsScreen.routeName,
+                                  arguments: {'chatId': widget.chatId},
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+                              _InviteLinkCard(
+                                inviteLink: inviteLink,
+                                isBusy: _rotatingInvite,
+                                onShowQr: inviteLink == null
+                                    ? null
+                                    : () => _showInviteQr(
+                                        groupData: data,
+                                        inviteLink: inviteLink,
+                                      ),
+                                onCopy: inviteLink == null
+                                    ? null
+                                    : () => _copyInviteLink(
+                                        groupData: data,
+                                        inviteLink: inviteLink,
+                                      ),
+                                onRotate: () => _rotateInvite(groupData: data),
+                                onRevoke: () => _revokeInvite(groupData: data),
+                              ),
+                              const SizedBox(height: 22),
+                              const _SectionHeader(title: 'Danger Zone'),
+                              const SizedBox(height: 10),
+                              _DangerButton(
+                                text: 'Leave group',
+                                onTap: () => _leaveGroup(),
+                              ),
+                              const SizedBox(height: 10),
+                              _DangerButton(
+                                text: 'Delete group',
+                                onTap: isOwner ? () => _deleteGroup() : null,
+                              ),
+                              const SizedBox(height: 28),
+                            ],
                           ),
-                          _SettingsTile(
-                            icon: Icons.link,
-                            title: 'Invite link',
-                            onTap: () => _rotateInvite(groupData: data),
-                          ),
-                          _SettingsTile(
-                            icon: Icons.tune,
-                            title: 'Group permissions',
-                            onTap: () => Navigator.pushNamed(
-                              context,
-                              GroupPermissionsScreen.routeName,
-                              arguments: {'chatId': widget.chatId},
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          _InviteLinkCard(
-                            inviteLink: inviteLink,
-                            isBusy: _rotatingInvite,
-                            onShowQr: inviteLink == null
-                                ? null
-                                : () => _showInviteQr(
-                                    groupData: data,
-                                    inviteLink: inviteLink,
-                                  ),
-                            onCopy: inviteLink == null
-                                ? null
-                                : () => _copyInviteLink(
-                                    groupData: data,
-                                    inviteLink: inviteLink,
-                                  ),
-                            onRotate: () => _rotateInvite(groupData: data),
-                            onRevoke: () => _revokeInvite(groupData: data),
-                          ),
-                          const SizedBox(height: 22),
-                          const _SectionHeader(title: 'Danger Zone'),
-                          const SizedBox(height: 10),
-                          _DangerButton(
-                            text: 'Leave group',
-                            onTap: () => _leaveGroup(),
-                          ),
-                          const SizedBox(height: 10),
-                          _DangerButton(
-                            text: 'Delete group',
-                            onTap: isOwner ? () => _deleteGroup() : null,
-                          ),
-                          const SizedBox(height: 28),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
+                    ],
+                  );
+                },
+              ),
+            );
+          },
         );
       },
     );
@@ -1458,9 +1844,7 @@ class _SectionHeader extends StatelessWidget {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: isLight
-                  ? theme.colorScheme.onBackground
-                  : Colors.white,
+              color: isLight ? theme.colorScheme.onBackground : Colors.white,
             ),
           ),
         ),
@@ -1560,9 +1944,7 @@ class _GroupAvatar84 extends StatelessWidget {
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w700,
-                color: isLight
-                    ? theme.colorScheme.onSurface
-                    : Colors.white,
+                color: isLight ? theme.colorScheme.onSurface : Colors.white,
               ),
             ),
     );
@@ -1909,12 +2291,11 @@ class _MediaTile extends StatelessWidget {
               base = CachedNetworkImage(
                 imageUrl: url,
                 fit: BoxFit.cover,
-                placeholder: (context, _) =>
-                    Container(
-                      color: isLight
-                          ? theme.colorScheme.surface
-                          : const Color(0xFF151515),
-                    ),
+                placeholder: (context, _) => Container(
+                  color: isLight
+                      ? theme.colorScheme.surface
+                      : const Color(0xFF151515),
+                ),
                 errorWidget: (context, _, __) => Container(
                   color: isLight
                       ? theme.colorScheme.surface
@@ -2055,11 +2436,35 @@ class _MembersSectionState extends ConsumerState<_MembersSection> {
       stream: membersStream,
       builder: (context, snap) {
         final roleByUid = <String, String>{};
+        final memberDataByUid = <String, Map<String, dynamic>>{};
         for (final d in snap.data?.docs ?? const []) {
           final uid = d.id;
-          final role = (d.data()['role'] as String?) ?? '';
+          final data = d.data();
+          memberDataByUid[uid] = data;
+          final role = (data['role'] as String?) ?? '';
           if (role.isNotEmpty) roleByUid[uid] = role;
         }
+
+        int roleRank(String? role) {
+          final r = (role ?? '').toLowerCase();
+          if (r == 'owner') return 0;
+          if (r == 'admin') return 1;
+          return 2;
+        }
+
+        String displayNameFor(String uid) {
+          final u = ref
+              .watch(userDocProvider(uid))
+              .maybeWhen(data: (x) => x, orElse: () => null);
+          return ((u?.name ?? uid)).trim().toLowerCase();
+        }
+
+        visible.sort((a, b) {
+          final ar = roleRank(roleByUid[a]);
+          final br = roleRank(roleByUid[b]);
+          if (ar != br) return ar.compareTo(br);
+          return displayNameFor(a).compareTo(displayNameFor(b));
+        });
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2098,7 +2503,9 @@ class _MembersSectionState extends ConsumerState<_MembersSection> {
                   hintText: 'Search members',
                   hintStyle: TextStyle(
                     color: Theme.of(context).brightness == Brightness.light
-                        ? Theme.of(context).colorScheme.onSurface.withOpacity(0.5)
+                        ? Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.5)
                         : const Color(0xFF6F6F6F),
                   ),
                   border: InputBorder.none,
@@ -2130,6 +2537,7 @@ class _MembersSectionState extends ConsumerState<_MembersSection> {
                     canManage: widget.canManage,
                     myRole: widget.myRole,
                     role: roleByUid[id],
+                    memberData: memberDataByUid[id],
                     onOptimisticRemove: widget.onOptimisticRemove,
                     onOptimisticRemoveRollback:
                         widget.onOptimisticRemoveRollback,
@@ -2150,6 +2558,7 @@ class _MemberRow extends ConsumerWidget {
   final bool canManage;
   final String? myRole;
   final String? role;
+  final Map<String, dynamic>? memberData;
   final void Function(String targetUid)? onOptimisticRemove;
   final void Function(String targetUid)? onOptimisticRemoveRollback;
   final bool isRemoving;
@@ -2160,13 +2569,14 @@ class _MemberRow extends ConsumerWidget {
     required this.canManage,
     required this.myRole,
     required this.role,
+    required this.memberData,
     required this.onOptimisticRemove,
     required this.onOptimisticRemoveRollback,
     required this.isRemoving,
   });
 
-  Future<void> _openMemberActionsSheet(
-    BuildContext context,
+  Future<void> _openMemberActionsMenu(
+    BuildContext buttonContext,
     WidgetRef ref,
   ) async {
     final me = FirebaseAuth.instance.currentUser?.uid;
@@ -2174,217 +2584,533 @@ class _MemberRow extends ConsumerWidget {
     if (!canManage) return;
     if (userId == me) return;
 
-    final fs = FirestoreService();
-    final myRoleSnap = await fs.dmChats
-        .doc(chatId)
-        .collection('members')
-        .doc(me)
-        .get();
-    final effectiveMyRole =
-        (myRoleSnap.data()?['role'] as String?) ?? (myRole ?? 'member');
+    final effectiveMyRole = (myRole ?? 'member').toLowerCase();
     final isOwner = effectiveMyRole == 'owner';
     final isAdmin = effectiveMyRole == 'owner' || effectiveMyRole == 'admin';
     if (!isAdmin) return;
 
-    final targetSnap = await fs.dmChats
-        .doc(chatId)
-        .collection('members')
-        .doc(userId)
-        .get();
-    final targetRole = (targetSnap.data()?['role'] as String?) ?? 'member';
+    final targetRole = (role ?? 'member').toLowerCase();
     final targetIsOwner = targetRole == 'owner';
 
-    if (!context.mounted) return;
+    final rawMuted = memberData ?? const <String, dynamic>{};
+    final muteUntilTs = rawMuted['muteUntil'];
+    final muteUntil = muteUntilTs is Timestamp ? muteUntilTs.toDate() : null;
+    final isMutedFlag = rawMuted['isMuted'] as bool?;
+    final muted =
+        (isMutedFlag ?? (muteUntil != null)) &&
+        (muteUntil == null || DateTime.now().isBefore(muteUntil));
+    final bannedUntilTs = rawMuted['bannedUntil'];
+    final bannedUntil = bannedUntilTs is Timestamp
+        ? bannedUntilTs.toDate()
+        : null;
+    final isBanned =
+        bannedUntil != null && DateTime.now().isBefore(bannedUntil);
 
-    Future<void> mute(Duration? duration) async {
-      final until = duration == null
-          ? null
-          : Timestamp.fromDate(DateTime.now().add(duration));
-      try {
-        await ref
-            .read(groupModerationServiceProvider)
-            .muteUser(chatId: chatId, targetUid: userId, until: until);
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Mute updated')));
-      } catch (e) {
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Action failed: $e')));
-      }
-    }
+    final canEditAdmin = isOwner && !targetIsOwner;
+    final canRemove = !targetIsOwner;
 
-    Future<void> remove() async {
-      onOptimisticRemove?.call(userId);
-      try {
-        ref
-            .read(groupModerationServiceProvider)
-            .removeMember(chatId: chatId, targetUid: userId)
-            .catchError((_) {
-              onOptimisticRemoveRollback?.call(userId);
-            });
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Member removed')));
-      } catch (e) {
-        onOptimisticRemoveRollback?.call(userId);
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Action failed: $e')));
-      }
-    }
-
-    Future<void> setAdmin(bool makeAdmin) async {
-      try {
-        await ref
-            .read(groupModerationServiceProvider)
-            .setAdmin(chatId: chatId, targetUid: userId, isAdmin: makeAdmin);
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Role updated')));
-      } catch (e) {
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Action failed: $e')));
-      }
-    }
-
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        final canEditAdmin = isOwner && !targetIsOwner;
-        final canRemove = !targetIsOwner;
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(
-                  Icons.volume_off_outlined,
-                  color: Color(0xFFA0A0A0),
-                ),
-                title: Text(
-                  'Mute 10 min',
-                  style: TextStyle(
-                    color: Theme.of(context).brightness == Brightness.light
-                        ? Theme.of(context).colorScheme.onSurface
-                        : Colors.white,
-                  ),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await mute(const Duration(minutes: 10));
-                },
+    Future<Duration?> pickCustomDuration() async {
+      final controller = TextEditingController();
+      final picked = await showDialog<Duration?>(
+        context: buttonContext,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text('Custom ban duration'),
+            content: TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                labelText: 'Minutes',
+                hintText: 'e.g. 90',
               ),
-              ListTile(
-                leading: const Icon(
-                  Icons.volume_off_outlined,
-                  color: Color(0xFFA0A0A0),
-                ),
-                title: Text(
-                  'Mute 1 hour',
-                  style: TextStyle(
-                    color: Theme.of(context).brightness == Brightness.light
-                        ? Theme.of(context).colorScheme.onSurface
-                        : Colors.white,
-                  ),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await mute(const Duration(hours: 1));
-                },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
               ),
-              ListTile(
-                leading: const Icon(
-                  Icons.volume_off_outlined,
-                  color: Color(0xFFA0A0A0),
-                ),
-                title: Text(
-                  'Mute 24 hours',
-                  style: TextStyle(
-                    color: Theme.of(context).brightness == Brightness.light
-                        ? Theme.of(context).colorScheme.onSurface
-                        : Colors.white,
-                  ),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await mute(const Duration(hours: 24));
-                },
-              ),
-              ListTile(
-                leading: const Icon(
-                  Icons.volume_off_outlined,
-                  color: Color(0xFFA0A0A0),
-                ),
-                title: Text(
-                  'Mute until unmuted',
-                  style: TextStyle(
-                    color: Theme.of(context).brightness == Brightness.light
-                        ? Theme.of(context).colorScheme.onSurface
-                        : Colors.white,
-                  ),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await mute(null);
-                },
-              ),
-              Divider(
-                color: Colors.black.withOpacity(0.05),
-                thickness: 0.5,
-                height: 10,
-              ),
-              if (canEditAdmin)
-                ListTile(
-                  leading: const Icon(
-                    Icons.admin_panel_settings_outlined,
-                    color: Color(0xFFA0A0A0),
-                  ),
-                  title: Text(
-                    targetRole == 'admin' ? 'Remove admin' : 'Make admin',
-                    style: TextStyle(
-                      color: Theme.of(context).brightness == Brightness.light
-                          ? Theme.of(context).colorScheme.onSurface
-                          : Colors.white,
-                    ),
-                  ),
-                  onTap: () async {
+              TextButton(
+                onPressed: () {
+                  final raw = controller.text.trim();
+                  final mins = int.tryParse(raw);
+                  if (mins == null || mins <= 0) {
                     Navigator.pop(ctx);
-                    await setAdmin(targetRole != 'admin');
-                  },
-                ),
-              if (canRemove)
-                ListTile(
-                  leading: const Icon(
-                    Icons.remove_circle_outline,
-                    color: Color(0xFFE24C4C),
-                  ),
-                  title: const Text(
-                    'Remove from group',
-                    style: TextStyle(color: Color(0xFFE24C4C)),
-                  ),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    await remove();
-                  },
-                ),
-              const SizedBox(height: 8),
+                    return;
+                  }
+                  Navigator.pop(ctx, Duration(minutes: mins));
+                },
+                child: const Text('OK'),
+              ),
             ],
+          );
+        },
+      );
+      controller.dispose();
+      return picked;
+    }
+
+    final selected = await showModalBottomSheet<String>(
+      context: buttonContext,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        Widget handleBar() {
+          return Padding(
+            padding: const EdgeInsets.only(top: 10, bottom: 8),
+            child: Container(
+              width: 42,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade400,
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          );
+        }
+
+        Widget sectionTitle(String text) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 6),
+            child: Text(
+              text.toUpperCase(),
+              style: const TextStyle(
+                fontSize: 12,
+                letterSpacing: 1.2,
+                color: Colors.grey,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          );
+        }
+
+        Widget tile({
+          required IconData icon,
+          required String title,
+          required String subtitle,
+          required Color iconColor,
+          required VoidCallback onTap,
+          bool danger = false,
+        }) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            decoration: BoxDecoration(
+              color: danger
+                  ? Colors.red.withOpacity(0.08)
+                  : Colors.grey.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: ListTile(
+              leading: Icon(icon, color: iconColor),
+              title: Text(title),
+              subtitle: Text(subtitle),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: onTap,
+            ),
+          );
+        }
+
+        Future<void> openMutePicker() async {
+          final res = await showModalBottomSheet<String>(
+            context: ctx,
+            isScrollControlled: true,
+            backgroundColor: Colors.transparent,
+            builder: (innerCtx) {
+              return SafeArea(
+                child: DraggableScrollableSheet(
+                  initialChildSize: 0.35,
+                  minChildSize: 0.2,
+                  maxChildSize: 0.6,
+                  expand: false,
+                  builder: (context, scrollController) {
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(24),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          handleBar(),
+                          Expanded(
+                            child: ListView(
+                              controller: scrollController,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              children: [
+                                sectionTitle('Mute'),
+                                if (muted)
+                                  tile(
+                                    icon: Icons.volume_up_outlined,
+                                    title: 'Unmute member',
+                                    subtitle: 'Restore messaging permissions',
+                                    iconColor: Colors.orange,
+                                    onTap: () =>
+                                        Navigator.pop(innerCtx, 'unmute'),
+                                  )
+                                else ...[
+                                  tile(
+                                    icon: Icons.volume_off_outlined,
+                                    title: 'Mute 1 hour',
+                                    subtitle: 'Restrict messaging temporarily',
+                                    iconColor: Colors.orange,
+                                    onTap: () =>
+                                        Navigator.pop(innerCtx, 'mute_1h'),
+                                  ),
+                                  tile(
+                                    icon: Icons.volume_off_outlined,
+                                    title: 'Mute 24 hours',
+                                    subtitle: 'Restrict messaging for a day',
+                                    iconColor: Colors.orange,
+                                    onTap: () =>
+                                        Navigator.pop(innerCtx, 'mute_24h'),
+                                  ),
+                                  tile(
+                                    icon: Icons.volume_off_outlined,
+                                    title: 'Mute until unmuted',
+                                    subtitle: 'Restrict messaging indefinitely',
+                                    iconColor: Colors.orange,
+                                    onTap: () =>
+                                        Navigator.pop(innerCtx, 'mute_forever'),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          );
+
+          if (res != null && ctx.mounted) {
+            Navigator.pop(ctx, res);
+          }
+        }
+
+        Future<void> openBanPicker() async {
+          final res = await showModalBottomSheet<String>(
+            context: ctx,
+            isScrollControlled: true,
+            backgroundColor: Colors.transparent,
+            builder: (innerCtx) {
+              final until = bannedUntil;
+              final untilText = until == null
+                  ? null
+                  : '${until.hour.toString().padLeft(2, '0')}:${until.minute.toString().padLeft(2, '0')}';
+              return SafeArea(
+                child: DraggableScrollableSheet(
+                  initialChildSize: 0.45,
+                  minChildSize: 0.25,
+                  maxChildSize: 0.85,
+                  expand: false,
+                  builder: (context, scrollController) {
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(24),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          handleBar(),
+                          Expanded(
+                            child: ListView(
+                              controller: scrollController,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              children: [
+                                sectionTitle('Security'),
+                                if (isBanned && untilText != null)
+                                  tile(
+                                    icon: Icons.timer_outlined,
+                                    title: 'Banned until $untilText',
+                                    subtitle: 'This member cannot rejoin yet',
+                                    iconColor: Colors.deepPurple,
+                                    danger: true,
+                                    onTap: () {},
+                                  ),
+                                if (isBanned)
+                                  tile(
+                                    icon: Icons.check_circle_outline,
+                                    title: 'Unban user',
+                                    subtitle: 'Allow rejoining the group',
+                                    iconColor: Colors.deepPurple,
+                                    onTap: () =>
+                                        Navigator.pop(innerCtx, 'unban'),
+                                  )
+                                else ...[
+                                  tile(
+                                    icon: Icons.block_outlined,
+                                    title: 'Ban for 15 minutes',
+                                    subtitle: 'Prevent rejoining temporarily',
+                                    iconColor: Colors.deepPurple,
+                                    danger: true,
+                                    onTap: () =>
+                                        Navigator.pop(innerCtx, 'ban_15m'),
+                                  ),
+                                  tile(
+                                    icon: Icons.block_outlined,
+                                    title: 'Ban for 1 hour',
+                                    subtitle: 'Prevent rejoining temporarily',
+                                    iconColor: Colors.deepPurple,
+                                    danger: true,
+                                    onTap: () =>
+                                        Navigator.pop(innerCtx, 'ban_1h'),
+                                  ),
+                                  tile(
+                                    icon: Icons.block_outlined,
+                                    title: 'Ban for 24 hours',
+                                    subtitle: 'Prevent rejoining for a day',
+                                    iconColor: Colors.deepPurple,
+                                    danger: true,
+                                    onTap: () =>
+                                        Navigator.pop(innerCtx, 'ban_24h'),
+                                  ),
+                                  tile(
+                                    icon: Icons.edit_outlined,
+                                    title: 'Custom duration',
+                                    subtitle: 'Choose a custom ban duration',
+                                    iconColor: Colors.deepPurple,
+                                    onTap: () =>
+                                        Navigator.pop(innerCtx, 'ban_custom'),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          );
+
+          if (res != null && ctx.mounted) {
+            Navigator.pop(ctx, res);
+          }
+        }
+
+        return SafeArea(
+          child: DraggableScrollableSheet(
+            initialChildSize: 0.45,
+            minChildSize: 0.25,
+            maxChildSize: 0.85,
+            expand: false,
+            builder: (context, scrollController) {
+              final targetLabel = targetRole == 'admin'
+                  ? 'Remove admin'
+                  : 'Make admin';
+              final targetSubtitle = targetRole == 'admin'
+                  ? 'Revoke moderation privileges'
+                  : 'Grant moderation privileges';
+
+              return Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    handleBar(),
+                    Expanded(
+                      child: ListView(
+                        controller: scrollController,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        children: [
+                          sectionTitle('Moderation'),
+                          tile(
+                            icon: muted
+                                ? Icons.volume_up_outlined
+                                : Icons.volume_off_outlined,
+                            title: muted ? 'Unmute member' : 'Mute member',
+                            subtitle: muted
+                                ? 'Restore messaging permissions'
+                                : 'Restrict messaging temporarily',
+                            iconColor: Colors.orange,
+                            onTap: () async => openMutePicker(),
+                          ),
+
+                          const SizedBox(height: 10),
+
+                          sectionTitle('Member Controls'),
+                          if (canEditAdmin)
+                            tile(
+                              icon: Icons.admin_panel_settings_outlined,
+                              title: targetLabel,
+                              subtitle: targetSubtitle,
+                              iconColor: Colors.blue,
+                              onTap: () => Navigator.pop(
+                                ctx,
+                                targetRole == 'admin' ? 'demote' : 'promote',
+                              ),
+                            ),
+                          if (canRemove)
+                            tile(
+                              icon: Icons.person_remove_outlined,
+                              title: 'Remove member',
+                              subtitle: 'Remove from group permanently',
+                              iconColor: Colors.red,
+                              danger: true,
+                              onTap: () => Navigator.pop(ctx, 'remove'),
+                            ),
+
+                          const SizedBox(height: 10),
+
+                          sectionTitle('Security'),
+                          tile(
+                            icon: Icons.block_outlined,
+                            title: isBanned ? 'Manage ban' : 'Ban user',
+                            subtitle: isBanned
+                                ? 'This member is currently banned'
+                                : 'Prevent rejoining group',
+                            iconColor: Colors.deepPurple,
+                            danger: true,
+                            onTap: () async => openBanPicker(),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
         );
       },
     );
+    if (selected == null) return;
+
+    Future<void> runMute(Timestamp? until, {required bool isMuted}) async {
+      final messenger = ScaffoldMessenger.of(buttonContext);
+      try {
+        await ref
+            .read(groupModerationServiceProvider)
+            .setMute(
+              chatId: chatId,
+              targetUid: userId,
+              isMuted: isMuted,
+              until: until,
+            );
+        messenger.showSnackBar(const SnackBar(content: Text('Mute updated')));
+      } catch (e) {
+        messenger.showSnackBar(SnackBar(content: Text('Action failed: $e')));
+      }
+    }
+
+    Future<void> runRemove() async {
+      final messenger = ScaffoldMessenger.of(buttonContext);
+      onOptimisticRemove?.call(userId);
+      try {
+        await ref
+            .read(groupModerationServiceProvider)
+            .removeMember(chatId: chatId, targetUid: userId);
+        messenger.showSnackBar(const SnackBar(content: Text('Member removed')));
+      } catch (e) {
+        onOptimisticRemoveRollback?.call(userId);
+        final isPermissionError = e.toString().toLowerCase().contains(
+          'permission',
+        );
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              isPermissionError
+                  ? 'You are not allowed to perform this action'
+                  : 'Action failed: $e',
+            ),
+          ),
+        );
+      }
+    }
+
+    Future<void> runSetAdmin(bool makeAdmin) async {
+      final messenger = ScaffoldMessenger.of(buttonContext);
+      try {
+        await ref
+            .read(groupModerationServiceProvider)
+            .setAdmin(chatId: chatId, targetUid: userId, isAdmin: makeAdmin);
+        messenger.showSnackBar(const SnackBar(content: Text('Role updated')));
+      } catch (e) {
+        messenger.showSnackBar(SnackBar(content: Text('Action failed: $e')));
+      }
+    }
+
+    Future<void> runBan(Duration duration) async {
+      final messenger = ScaffoldMessenger.of(buttonContext);
+      try {
+        await ref
+            .read(groupModerationServiceProvider)
+            .banUser(
+              chatId: chatId,
+              userId: userId,
+              duration: duration,
+              performedBy: me,
+            );
+        messenger.showSnackBar(const SnackBar(content: Text('Member banned')));
+      } catch (e) {
+        messenger.showSnackBar(SnackBar(content: Text('Action failed: $e')));
+      }
+    }
+
+    Future<void> runUnban() async {
+      final messenger = ScaffoldMessenger.of(buttonContext);
+      try {
+        await ref
+            .read(groupModerationServiceProvider)
+            .unbanUser(chatId: chatId, userId: userId);
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Member unbanned')),
+        );
+      } catch (e) {
+        messenger.showSnackBar(SnackBar(content: Text('Action failed: $e')));
+      }
+    }
+
+    if (selected == 'unmute') {
+      await runMute(null, isMuted: false);
+    } else if (selected == 'mute_1h') {
+      await runMute(
+        Timestamp.fromDate(DateTime.now().add(const Duration(hours: 1))),
+        isMuted: true,
+      );
+    } else if (selected == 'mute_24h') {
+      await runMute(
+        Timestamp.fromDate(DateTime.now().add(const Duration(hours: 24))),
+        isMuted: true,
+      );
+    } else if (selected == 'mute_forever') {
+      await runMute(null, isMuted: true);
+    } else if (selected == 'ban_15m') {
+      await runBan(const Duration(minutes: 15));
+    } else if (selected == 'ban_1h') {
+      await runBan(const Duration(hours: 1));
+    } else if (selected == 'ban_24h') {
+      await runBan(const Duration(hours: 24));
+    } else if (selected == 'ban_custom') {
+      final duration = await pickCustomDuration();
+      if (duration != null) {
+        await runBan(duration);
+      }
+    } else if (selected == 'unban') {
+      await runUnban();
+    } else if (selected == 'promote') {
+      await runSetAdmin(true);
+    } else if (selected == 'demote') {
+      await runSetAdmin(false);
+    } else if (selected == 'remove') {
+      await runRemove();
+    }
   }
 
   @override
@@ -2419,8 +3145,8 @@ class _MemberRow extends ConsumerWidget {
                 children: [
                   CircleAvatar(
                     radius: 18,
-                    backgroundColor: Theme.of(context).brightness ==
-                            Brightness.light
+                    backgroundColor:
+                        Theme.of(context).brightness == Brightness.light
                         ? Theme.of(context).colorScheme.surface
                         : const Color(0xFF141414),
                     child: pfp.isEmpty
@@ -2429,7 +3155,8 @@ class _MemberRow extends ConsumerWidget {
                                 ? name.characters.first.toUpperCase()
                                 : 'U',
                             style: TextStyle(
-                              color: Theme.of(context).brightness ==
+                              color:
+                                  Theme.of(context).brightness ==
                                       Brightness.light
                                   ? Theme.of(context).colorScheme.onSurface
                                   : Colors.white,
@@ -2497,20 +3224,22 @@ class _MemberRow extends ConsumerWidget {
             ),
           ),
           if (canManage)
-            IconButton(
-              onPressed: () => _openMemberActionsSheet(context, ref),
-              icon: Icon(
-                Icons.more_vert_rounded,
-                color: Theme.of(context).brightness == Brightness.light
-                    ? Theme.of(context).colorScheme.primary
-                    : const Color(0xFFA0A0A0),
+            Builder(
+              builder: (buttonContext) => IconButton(
+                onPressed: () => _openMemberActionsMenu(buttonContext, ref),
+                icon: Icon(
+                  Icons.more_vert_rounded,
+                  color: Theme.of(context).brightness == Brightness.light
+                      ? Theme.of(context).colorScheme.primary
+                      : const Color(0xFFA0A0A0),
+                ),
               ),
             ),
         ],
       ),
     );
 
-    return AnimatedOpacity(
+    final row = AnimatedOpacity(
       duration: const Duration(milliseconds: 220),
       opacity: isRemoving ? 0.0 : 1.0,
       child: AnimatedSize(
@@ -2518,6 +3247,17 @@ class _MemberRow extends ConsumerWidget {
         curve: Curves.easeInOut,
         alignment: Alignment.topCenter,
         child: isRemoving ? const SizedBox(height: 0) : content,
+      ),
+    );
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onLongPress: canManage
+            ? () => _openMemberActionsMenu(context, ref)
+            : null,
+        child: row,
       ),
     );
   }
@@ -2537,24 +3277,22 @@ class _SlowModeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-      final isLight = Theme.of(context).brightness == Brightness.light;
-      final bg = selected
-      ? (isLight
-        ? Theme.of(context).colorScheme.primary.withOpacity(0.12)
-        : const Color(0xFF1E2A3A))
-      : (isLight
-        ? Theme.of(context).colorScheme.surface
-        : const Color(0xFF0F0F0F));
-      final border = selected
-      ? (isLight
-        ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
-        : const Color(0xFF2A4A7A))
-      : (isLight ? Colors.black.withOpacity(0.05) : const Color(0xFF222222));
-      final fg = enabled
-      ? (isLight
-        ? Theme.of(context).colorScheme.onSurface
-        : Colors.white)
-      : const Color(0xFF6F6F6F);
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final bg = selected
+        ? (isLight
+              ? Theme.of(context).colorScheme.primary.withOpacity(0.12)
+              : const Color(0xFF1E2A3A))
+        : (isLight
+              ? Theme.of(context).colorScheme.surface
+              : const Color(0xFF0F0F0F));
+    final border = selected
+        ? (isLight
+              ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
+              : const Color(0xFF2A4A7A))
+        : (isLight ? Colors.black.withOpacity(0.05) : const Color(0xFF222222));
+    final fg = enabled
+        ? (isLight ? Theme.of(context).colorScheme.onSurface : Colors.white)
+        : const Color(0xFF6F6F6F);
     return InkWell(
       onTap: enabled ? onTap : null,
       borderRadius: BorderRadius.circular(100),
@@ -2665,9 +3403,7 @@ class _SettingsTile extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                   color: onTap == null
                       ? const Color(0xFF6F6F6F)
-                      : (isLight
-                            ? theme.colorScheme.onSurface
-                            : Colors.white),
+                      : (isLight ? theme.colorScheme.onSurface : Colors.white),
                 ),
               ),
             ),
@@ -2838,7 +3574,10 @@ class _DangerButton extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.redAccent.withOpacity(0.1),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.redAccent.withOpacity(0.35), width: 1),
+          border: Border.all(
+            color: Colors.redAccent.withOpacity(0.35),
+            width: 1,
+          ),
         ),
         child: Text(
           text,
@@ -2852,4 +3591,3 @@ class _DangerButton extends StatelessWidget {
     );
   }
 }
-

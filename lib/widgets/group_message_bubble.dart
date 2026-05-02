@@ -50,7 +50,9 @@ class GroupMessageBubble extends ConsumerWidget {
     final secondaryText = isDark
         ? AppColors.textDarkSecondary
         : AppColors.textLightSecondary;
-    final timeText = isDark ? AppColors.textDarkSecondary : AppColors.timeTextLight;
+    final timeText = isDark
+        ? AppColors.textDarkSecondary
+        : AppColors.timeTextLight;
 
     if (message.kind == 'system') {
       final t = (message.text ?? '').trim();
@@ -387,10 +389,7 @@ class GroupMessageBubble extends ConsumerWidget {
 
   Widget _metaRow(Color baseColor, {required Color timeText}) {
     final List<Widget> children = [
-      Text(
-        _formatTime(),
-        style: TextStyle(fontSize: 10, color: timeText),
-      ),
+      Text(_formatTime(), style: TextStyle(fontSize: 10, color: timeText)),
     ];
 
     if (isMe) {
@@ -703,12 +702,12 @@ class _ReplyPreview extends ConsumerWidget {
                     style: TextStyle(
                       fontSize: 11,
                       color: preview.isEmpty
-                        ? (isLight
-                          ? const Color(0xFF6B7280)
-                          : const Color(0xFF888888))
-                        : (isLight
-                          ? const Color(0xFF4B5563)
-                          : const Color(0xFFB5B5B5)),
+                          ? (isLight
+                                ? const Color(0xFF6B7280)
+                                : const Color(0xFF888888))
+                          : (isLight
+                                ? const Color(0xFF4B5563)
+                                : const Color(0xFFB5B5B5)),
                       fontStyle: preview.isEmpty
                           ? FontStyle.italic
                           : FontStyle.normal,
@@ -729,11 +728,7 @@ class _ReactionsRow extends StatelessWidget {
   final Map<String, int> reactions;
   final String? myReaction;
   final VoidCallback? onTap;
-  const _ReactionsRow({
-    required this.reactions,
-    this.myReaction,
-    this.onTap,
-  });
+  const _ReactionsRow({required this.reactions, this.myReaction, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -823,5 +818,3 @@ class _ThreadIndicator extends StatelessWidget {
     );
   }
 }
-
-

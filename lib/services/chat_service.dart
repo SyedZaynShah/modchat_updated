@@ -1,16 +1,17 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/message_model.dart';
 import 'firestore_service.dart';
-import 'storage_service.dart';
 
 class ChatService {
   ChatService(this._fs);
   final FirestoreService _fs;
   final _auth = FirebaseAuth.instance;
-  final _storage = StorageService();
 
   String chatIdFor(String a, String b) {
     final list = [a, b]..sort();
@@ -35,10 +36,7 @@ class ChatService {
       'id': chatId,
       'type': 'dm',
       'members': members,
-      'lastRead': {
-        me: now,
-        peerId: now,
-      },
+      'lastRead': {me: now, peerId: now},
       'typing': {
         me: {'active': false, 'type': null, 'timestamp': now},
         peerId: {'active': false, 'type': null, 'timestamp': now},
@@ -85,9 +83,7 @@ class ChatService {
         'createdAt': now,
         'state': 'active',
         'members': members,
-        'lastRead': {
-          for (final uid in members) uid: now,
-        },
+        'lastRead': {for (final uid in members) uid: now},
         'typing': {
           for (final uid in members)
             uid: {'active': false, 'type': null, 'timestamp': now},
@@ -122,9 +118,14 @@ class ChatService {
         'userId': uid,
         'role': role,
         'joinedAt': now,
+        'removedAt': null, // null = currently active member
+        'removeType': null,
+        'removedBy': null,
         'muteUntil': null,
         'lastSentAt': null,
         'isBanned': false,
+        'bannedUntil': null,
+        'banReason': null,
       });
     }
     await batch.commit();
@@ -135,11 +136,36 @@ class ChatService {
   Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> streamChats(
     String uid,
   ) {
+    print('chat_list_query:start uid=$uid');
     return _fs.dmChats
         .where('members', arrayContains: uid)
         .orderBy('lastTimestamp', descending: true)
+        .limit(50)
         .snapshots()
-        .map((s) => s.docs)
+        .handleError((error, stackTrace) {
+          if (error is FirebaseException) {
+            print(
+              'chat_list_query:error code=${error.code} message=${error.message}',
+            );
+          } else {
+            print('chat_list_query:error $error');
+          }
+        })
+        .map((s) {
+          print('chat_list_query:docs_received count=${s.docs.length}');
+          final docs = s.docs
+              .where((d) {
+                final data = d.data();
+                final members = data['members'];
+                if (members is! List) {
+                  print('chat_list_query:skip_invalid_members chatId=${d.id}');
+                  return false;
+                }
+                return true;
+              })
+              .toList(growable: false);
+          return docs;
+        })
         .distinct((prev, next) {
           if (identical(prev, next)) return true;
           if (prev.length != next.length) return false;
@@ -161,9 +187,43 @@ class ChatService {
         .messages(chatId)
         .orderBy('timestamp', descending: false)
         .snapshots(includeMetadataChanges: true)
-        .map((s) {
+        .asyncMap((s) async {
+          // Get member doc for timeline filtering
+          Timestamp? joinedAt;
+          Timestamp? removedAt;
+          if (uid != null) {
+            try {
+              final memberSnap = await _fs.dmChats
+                  .doc(chatId)
+                  .collection('members')
+                  .doc(uid)
+                  .get();
+              if (memberSnap.exists) {
+                final mData = memberSnap.data() ?? {};
+                joinedAt = mData['joinedAt'] as Timestamp?;
+                removedAt = mData['removedAt'] as Timestamp?;
+              }
+            } catch (_) {
+              // If member doc missing or error, allow all messages (fallback)
+            }
+          }
+
           final docs = s.docs.where((d) {
             final data = d.data();
+
+            // Timeline filtering: only show messages within membership period
+            final msgTimestamp = data['timestamp'] as Timestamp?;
+            if (msgTimestamp != null && uid != null) {
+              // If user has joinedAt, hide messages before join time
+              if (joinedAt != null && msgTimestamp.compareTo(joinedAt) < 0) {
+                return false;
+              }
+              // If user has been removed, hide only messages after removal time
+              if (removedAt != null && msgTimestamp.compareTo(removedAt) > 0) {
+                return false;
+              }
+            }
+
             final visibleTo = List<String>.from(
               (data['visibleTo'] as List?) ?? const [],
             );
@@ -197,11 +257,194 @@ class ChatService {
             if (a.isDeletedForAll != b.isDeletedForAll) return false;
             if (a.text != b.text) return false;
             if (a.mediaUrl != b.mediaUrl) return false;
+            if (a.uploadStatus != b.uploadStatus) return false;
+            if (a.uploadProgress != b.uploadProgress) return false;
+            if (a.localPath != b.localPath) return false;
+            if (a.cachedPath != b.cachedPath) return false;
+            if (a.thumbnailUrl != b.thumbnailUrl) return false;
             if (a.reactions != b.reactions) return false;
             if (a.hasPendingWrites != b.hasPendingWrites) return false;
           }
           return true;
         });
+  }
+
+  void _logMessageWrite(Map<String, dynamic> data) {
+    print('MESSAGE WRITE $data');
+  }
+
+  Future<bool> _ensureMemberOrLog(String chatId) async {
+    final uid = _auth.currentUser?.uid;
+    print('SENDING MESSAGE:');
+    print('uid: $uid');
+    print('chatId: $chatId');
+    if (uid == null) {
+      print('❌ USER NOT MEMBER');
+      return false;
+    }
+
+    final memberRef = _fs.dmChats.doc(chatId).collection('members').doc(uid);
+    final memberDoc = await memberRef.get();
+    if (memberDoc.exists) return true;
+
+    final chatSnap = await _fs.dmChats.doc(chatId).get();
+    if (!chatSnap.exists) {
+      print('❌ USER NOT MEMBER');
+      return false;
+    }
+
+    final data = chatSnap.data() ?? const <String, dynamic>{};
+    final members = List<String>.from((data['members'] as List?) ?? const []);
+    final type = (data['type'] as String?) ?? 'dm';
+    if (!members.contains(uid)) {
+      print('❌ USER NOT MEMBER');
+      return false;
+    }
+    if (type == 'group') {
+      // For groups, message create rules depend on members/{uid} existing.
+      // After join/approve flows there can be a short race before the doc is readable.
+      for (var i = 0; i < 4; i++) {
+        await Future.delayed(const Duration(milliseconds: 220));
+        final retry = await memberRef.get();
+        if (retry.exists) return true;
+      }
+      print('❌ USER NOT MEMBER');
+      return false;
+    }
+    return true;
+  }
+
+  void _validateOutboundMessagePayload(Map<String, dynamic> data) {
+    if (!data.containsKey('createdAt') || data['createdAt'] == null) {
+      throw Exception('createdAt missing');
+    }
+    if (!data.containsKey('senderId') ||
+        data['senderId'] != _auth.currentUser?.uid) {
+      throw Exception('senderId mismatch');
+    }
+    final mediaUrl = data['mediaUrl'];
+    if (mediaUrl is String && mediaUrl.startsWith('file://')) {
+      throw Exception('LOCAL FILE PATH DETECTED');
+    }
+    print('RULE CHECK senderId: ${data['senderId']}');
+    if (mediaUrl is String) {
+      print('MEDIA URL: $mediaUrl');
+    }
+  }
+
+  Future<String> _uploadWithProgress({
+    required String bucket,
+    required String path,
+    required String fileLabel,
+    required Uint8List bytes,
+    required String contentType,
+    String? localFilePath,
+    required void Function(double value) onProgress,
+  }) async {
+    print('Bucket: $bucket');
+    print('Uploading to path: $path');
+    print('Uploading file: $fileLabel');
+    print('Uploading to: $bucket/$path');
+
+    try {
+      onProgress(0.0);
+      final from = Supabase.instance.client.storage.from(bucket);
+      late final String res;
+
+      if (kIsWeb) {
+        res = await from.uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(
+            contentType: contentType,
+            upsert: false,
+            cacheControl: '3600',
+          ),
+        );
+      } else {
+        if (localFilePath == null || localFilePath.isEmpty) {
+          print('FILE MISSING: $localFilePath');
+          throw Exception('Invalid file path');
+        }
+        final file = File(localFilePath);
+        final exists = await file.exists();
+        print('Local file: ${file.path}');
+        print('File exists: $exists');
+        if (!exists) {
+          print('FILE MISSING: $localFilePath');
+          throw Exception('Invalid file path');
+        }
+
+        res = await from.upload(
+          path,
+          file,
+          fileOptions: FileOptions(
+            contentType: contentType,
+            upsert: false,
+            cacheControl: '3600',
+          ),
+        );
+      }
+
+      if (res.isEmpty) {
+        print('UPLOAD FAILED: empty response');
+        throw Exception('Upload failed');
+      }
+
+      print('UPLOAD SUCCESS: $res');
+      onProgress(1.0);
+      return '$bucket/$path';
+    } catch (e) {
+      print('UPLOAD ERROR: $e');
+      rethrow;
+    }
+  }
+
+  String getBucket({required bool isGroup, required String type}) {
+    if (type == 'profile') return 'profilePictures';
+    if (type == 'groupImage') return 'groupImages';
+    return 'chatMedia';
+  }
+
+  /// Gets a stable public URL for a Supabase storage path.
+  /// Returns null if bucket/path is invalid.
+  String? getPublicUrl(String bucket, String path) {
+    try {
+      return Supabase.instance.client.storage.from(bucket).getPublicUrl(path);
+    } catch (e) {
+      print('Failed to get public URL: $e');
+      return null;
+    }
+  }
+
+  String sanitizeFileName(String name) {
+    return name.replaceAll(' ', '_').replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '');
+  }
+
+  String _buildUniqueMediaPath({
+    required String chatId,
+    required String senderId,
+    required String fileName,
+    String? messageId,
+  }) {
+    final sanitizedName = sanitizeFileName(fileName);
+    print('FILE NAME CLEANED: $sanitizedName');
+    final unique =
+        messageId ?? DateTime.now().millisecondsSinceEpoch.toString();
+    final path = '$chatId/${unique}_${senderId}_$sanitizedName';
+    print('UPLOAD PATH: $path');
+    return path;
+  }
+
+  Future<void> _markUploadFailed(
+    DocumentReference<Map<String, dynamic>> msgRef,
+  ) async {
+    await msgRef.set({
+      'status': 'failed',
+      'uploadStatus': 'failed',
+      'uploadProgress': 0.0,
+      'mediaUrl': null,
+    }, SetOptions(merge: true));
   }
 
   Future<void> toggleReaction({
@@ -327,6 +570,7 @@ class ChatService {
     required MessageModel source,
     required String targetChatId,
   }) async {
+    if (!await _ensureMemberOrLog(targetChatId)) return;
     final uid = _auth.currentUser!.uid;
     final chatSnap = await _fs.dmChats.doc(targetChatId).get();
     if (!chatSnap.exists) return;
@@ -346,18 +590,21 @@ class ChatService {
         ? null
         : source.messageType.name;
 
-    await msgRef.set({
+    final payload = <String, dynamic>{
       'chatId': targetChatId,
       'senderId': uid,
       'receiverId': receiverId,
-      'text': source.messageType == MessageType.text
-          ? (source.text ?? '')
-          : null,
-      'mediaUrl': source.messageType == MessageType.text
-          ? null
-          : source.mediaUrl,
-      'mediaType': mediaType,
-      'mediaSize': source.mediaSize,
+      if (source.messageType == MessageType.text) 'text': (source.text ?? ''),
+      if (source.messageType != MessageType.text && source.mediaUrl != null)
+        'mediaUrl': source.mediaUrl,
+      if (source.messageType != MessageType.text && source.mediaPath != null)
+        'mediaPath': source.mediaPath,
+      if (source.messageType != MessageType.text && source.storagePath != null)
+        'storagePath': source.storagePath,
+      if (mediaType != null) 'mediaType': mediaType,
+      if (source.mediaSize != null) 'mediaSize': source.mediaSize,
+      'type': source.messageType.name,
+      'createdAt': now,
       'timestamp': now,
       'isSeen': false,
       'status': 1,
@@ -369,7 +616,10 @@ class ChatService {
       'forwarded': true,
       'originalSender': source.senderId,
       'originalMessageId': source.id,
-    });
+    };
+    _validateOutboundMessagePayload(payload);
+    _logMessageWrite(payload);
+    await msgRef.set(payload);
 
     await _fs.dmChats.doc(targetChatId).update({
       'lastMessage': source.messageType == MessageType.text
@@ -389,17 +639,18 @@ class ChatService {
     required String text,
     Map<String, dynamic>? replyTo,
   }) async {
+    if (!await _ensureMemberOrLog(chatId)) return;
     final uid = _auth.currentUser!.uid;
     final doc = _fs.messages(chatId).doc();
     final now = FieldValue.serverTimestamp();
-    await doc.set({
+    final payload = <String, dynamic>{
       'chatId': chatId,
       'senderId': uid,
       'receiverId': peerId,
       'text': text,
-      'mediaUrl': null,
-      'mediaType': null,
+      'type': 'text',
       if (replyTo != null) 'replyTo': replyTo,
+      'createdAt': now,
       'timestamp': now,
       'isSeen': false,
       'status': 1,
@@ -408,7 +659,10 @@ class ChatService {
       'deletedFor': <String>[],
       'edited': false,
       'isDeletedForAll': false,
-    });
+    };
+    _validateOutboundMessagePayload(payload);
+    _logMessageWrite(payload);
+    await doc.set(payload);
     await _fs.dmChats.doc(chatId).update({
       'lastMessage': text,
       'lastMessageType': 'text',
@@ -429,34 +683,39 @@ class ChatService {
     int? audioDurationMs,
     Map<String, dynamic>? replyTo,
   }) async {
+    if (!await _ensureMemberOrLog(chatId)) return;
     final uid = _auth.currentUser!.uid;
     final msgRef = _fs.messages(chatId).doc();
-    final ts = DateTime.now().millisecondsSinceEpoch;
     final ext = _extOf(fileName);
-    final path = 'chatMedia/$chatId/$uid/$ts${ext.isNotEmpty ? '.$ext' : ''}';
-    final bucket = switch (type) {
-      MessageType.audio => _storage.audioBucket,
-      _ => _storage.mediaBucket,
-    };
-    final now = FieldValue.serverTimestamp();
     final mediaType = _mediaTypeFor(fileName, contentType, type);
+    final bucket = getBucket(isGroup: false, type: mediaType);
+    final path = _buildUniqueMediaPath(
+      chatId: chatId,
+      senderId: uid,
+      fileName: fileName,
+      messageId: msgRef.id,
+    );
+    final mediaPath = '$bucket/$path';
+    final now = FieldValue.serverTimestamp();
 
     // Optimistic: write message doc immediately so it appears in the UI.
-    await msgRef.set({
+    final payload = <String, dynamic>{
       'chatId': chatId,
       'senderId': uid,
       'receiverId': peerId,
-      'text': null,
-      'mediaUrl': null,
+      'mediaPath': mediaPath,
       'storagePath': path,
-      if (localPath != null) 'localPath': localPath,
+      'type': type.name,
       if (thumbnailPath != null) 'thumbnailUrl': thumbnailPath,
-      'fileName': ext.isNotEmpty ? '$ts.$ext' : '$ts',
+      'fileName': ext.isNotEmpty
+          ? '${DateTime.now().millisecondsSinceEpoch}.$ext'
+          : '${DateTime.now().millisecondsSinceEpoch}',
       'mediaType': mediaType,
       'mediaSize': bytes.length,
       if (type == MessageType.audio && audioDurationMs != null)
         'audioDurationMs': audioDurationMs,
       if (replyTo != null) 'replyTo': replyTo,
+      'createdAt': now,
       'timestamp': now,
       'isSeen': false,
       'status': 1,
@@ -466,7 +725,13 @@ class ChatService {
       'edited': false,
       'isDeletedForAll': false,
       'uploadStatus': 'uploading',
-    });
+      'uploadProgress': 0.0,
+    };
+    _validateOutboundMessagePayload(payload);
+    _logMessageWrite(payload);
+    await msgRef.set(payload);
+    print('MEDIA URL: $mediaPath');
+    print('MEDIA PATH SAVED: $mediaPath');
 
     await _fs.dmChats.doc(chatId).update({
       'lastMessage': type.name,
@@ -475,21 +740,43 @@ class ChatService {
       'lastActivityAt': now,
     });
 
-    // Retry upload once on transient SocketException
     Future<void> doUpload() async {
-      final res = await _storage.uploadBytes(
-        data: bytes,
+      if (localPath != null && localPath.isNotEmpty) {
+        final file = File(localPath);
+        final exists = await file.exists();
+        if (!exists) {
+          print('FILE DOES NOT EXIST: $localPath');
+          throw Exception('Invalid file path');
+        }
+      }
+      await _uploadWithProgress(
         bucket: bucket,
         path: path,
+        fileLabel: localPath ?? fileName,
+        bytes: bytes,
         contentType: contentType,
+        localFilePath: localPath,
+        onProgress: (value) {
+          unawaited(
+            msgRef.set({'uploadProgress': value}, SetOptions(merge: true)),
+          );
+        },
       );
 
+      // Generate stable public URL after successful upload
+      final publicUrl = getPublicUrl(bucket, path);
+
       await msgRef.set({
-        'mediaUrl': res.publicUrl,
+        'mediaPath': mediaPath,
+        'storagePath': path,
+        if (publicUrl != null) 'mediaUrl': publicUrl,
+        'status': 1,
         'uploadStatus': 'done',
-        'localPath': FieldValue.delete(),
-        'thumbnailUrl': FieldValue.delete(),
+        'uploadProgress': 1.0,
+        if (localPath != null && localPath.isNotEmpty) 'cachedPath': localPath,
       }, SetOptions(merge: true));
+      print('MEDIA URL: $mediaPath');
+      print('PUBLIC URL: $publicUrl');
     }
 
     try {
@@ -499,12 +786,14 @@ class ChatService {
         await Future.delayed(const Duration(milliseconds: 400));
         await doUpload();
       } catch (e) {
-        await msgRef.set({'uploadStatus': 'failed'}, SetOptions(merge: true));
-        rethrow;
+        print('UPLOAD ERROR: $e');
+        await _markUploadFailed(msgRef);
+        return;
       }
     } catch (e) {
-      await msgRef.set({'uploadStatus': 'failed'}, SetOptions(merge: true));
-      rethrow;
+      print('UPLOAD ERROR: $e');
+      await _markUploadFailed(msgRef);
+      return;
     }
   }
 
@@ -514,18 +803,19 @@ class ChatService {
     required String text,
     Map<String, dynamic>? replyTo,
   }) async {
+    if (!await _ensureMemberOrLog(chatId)) return;
     final uid = _auth.currentUser!.uid;
     final members = {...memberIds, uid}.toList()..sort();
     final doc = _fs.messages(chatId).doc();
     final now = FieldValue.serverTimestamp();
-    await doc.set({
+    final payload = <String, dynamic>{
       'chatId': chatId,
       'senderId': uid,
       'receiverId': '',
       'text': text,
-      'mediaUrl': null,
-      'mediaType': null,
+      'type': 'text',
       if (replyTo != null) 'replyTo': replyTo,
+      'createdAt': now,
       'timestamp': now,
       'isSeen': false,
       'status': 1,
@@ -534,13 +824,20 @@ class ChatService {
       'deletedFor': <String>[],
       'edited': false,
       'isDeletedForAll': false,
-    });
+    };
+    _validateOutboundMessagePayload(payload);
+    _logMessageWrite(payload);
+    await doc.set(payload);
     await _fs.dmChats.doc(chatId).update({
       'lastMessage': text,
       'lastMessageType': 'text',
       'lastTimestamp': now,
       'lastActivityAt': now,
       'memberCount': members.length,
+    });
+    // Update per-user lastSentAt for slow mode tracking
+    await _fs.dmChats.doc(chatId).collection('members').doc(uid).update({
+      'lastSentAt': now,
     });
   }
 
@@ -556,35 +853,40 @@ class ChatService {
     int? audioDurationMs,
     Map<String, dynamic>? replyTo,
   }) async {
+    if (!await _ensureMemberOrLog(chatId)) return;
     final uid = _auth.currentUser!.uid;
     final members = {...memberIds, uid}.toList()..sort();
     final msgRef = _fs.messages(chatId).doc();
-    final ts = DateTime.now().millisecondsSinceEpoch;
     final ext = _extOf(fileName);
-    final path = 'chatMedia/$chatId/$uid/$ts${ext.isNotEmpty ? '.$ext' : ''}';
-    final bucket = switch (type) {
-      MessageType.audio => _storage.audioBucket,
-      _ => _storage.mediaBucket,
-    };
-    final now = FieldValue.serverTimestamp();
     final mediaType = _mediaTypeFor(fileName, contentType, type);
+    final bucket = getBucket(isGroup: true, type: mediaType);
+    final path = _buildUniqueMediaPath(
+      chatId: chatId,
+      senderId: uid,
+      fileName: fileName,
+      messageId: msgRef.id,
+    );
+    final mediaPath = '$bucket/$path';
+    final now = FieldValue.serverTimestamp();
 
     // Optimistic: write message doc immediately so it appears in the UI.
-    await msgRef.set({
+    final payload = <String, dynamic>{
       'chatId': chatId,
       'senderId': uid,
       'receiverId': '',
-      'text': null,
-      'mediaUrl': null,
+      'mediaPath': mediaPath,
       'storagePath': path,
-      if (localPath != null) 'localPath': localPath,
+      'type': type.name,
       if (thumbnailPath != null) 'thumbnailUrl': thumbnailPath,
-      'fileName': ext.isNotEmpty ? '$ts.$ext' : '$ts',
+      'fileName': ext.isNotEmpty
+          ? '${DateTime.now().millisecondsSinceEpoch}.$ext'
+          : '${DateTime.now().millisecondsSinceEpoch}',
       'mediaType': mediaType,
       'mediaSize': bytes.length,
       if (type == MessageType.audio && audioDurationMs != null)
         'audioDurationMs': audioDurationMs,
       if (replyTo != null) 'replyTo': replyTo,
+      'createdAt': now,
       'timestamp': now,
       'isSeen': false,
       'status': 1,
@@ -594,7 +896,13 @@ class ChatService {
       'edited': false,
       'isDeletedForAll': false,
       'uploadStatus': 'uploading',
-    });
+      'uploadProgress': 0.0,
+    };
+    _validateOutboundMessagePayload(payload);
+    _logMessageWrite(payload);
+    await msgRef.set(payload);
+    print('MEDIA URL: $mediaPath');
+    print('MEDIA PATH SAVED: $mediaPath');
 
     await _fs.dmChats.doc(chatId).update({
       'lastMessage': type.name,
@@ -603,21 +911,48 @@ class ChatService {
       'lastActivityAt': now,
       'memberCount': members.length,
     });
+    // Update per-user lastSentAt for slow mode tracking
+    await _fs.dmChats.doc(chatId).collection('members').doc(uid).update({
+      'lastSentAt': now,
+    });
 
     Future<void> doUpload() async {
-      final res = await _storage.uploadBytes(
-        data: bytes,
+      if (localPath != null && localPath.isNotEmpty) {
+        final file = File(localPath);
+        final exists = await file.exists();
+        if (!exists) {
+          print('FILE DOES NOT EXIST: $localPath');
+          throw Exception('Invalid file path');
+        }
+      }
+      await _uploadWithProgress(
         bucket: bucket,
         path: path,
+        fileLabel: localPath ?? fileName,
+        bytes: bytes,
         contentType: contentType,
+        localFilePath: localPath,
+        onProgress: (value) {
+          unawaited(
+            msgRef.set({'uploadProgress': value}, SetOptions(merge: true)),
+          );
+        },
       );
 
+      // Generate stable public URL after successful upload
+      final publicUrl = getPublicUrl(bucket, path);
+
       await msgRef.set({
-        'mediaUrl': res.publicUrl,
+        'mediaPath': mediaPath,
+        'storagePath': path,
+        if (publicUrl != null) 'mediaUrl': publicUrl,
+        'status': 1,
         'uploadStatus': 'done',
-        'localPath': FieldValue.delete(),
-        'thumbnailUrl': FieldValue.delete(),
+        'uploadProgress': 1.0,
+        if (localPath != null && localPath.isNotEmpty) 'cachedPath': localPath,
       }, SetOptions(merge: true));
+      print('MEDIA URL: $mediaPath');
+      print('PUBLIC URL: $publicUrl');
     }
 
     try {
@@ -627,12 +962,118 @@ class ChatService {
         await Future.delayed(const Duration(milliseconds: 400));
         await doUpload();
       } catch (e) {
-        await msgRef.set({'uploadStatus': 'failed'}, SetOptions(merge: true));
-        rethrow;
+        print('UPLOAD ERROR: $e');
+        await _markUploadFailed(msgRef);
+        return;
       }
     } catch (e) {
-      await msgRef.set({'uploadStatus': 'failed'}, SetOptions(merge: true));
-      rethrow;
+      print('UPLOAD ERROR: $e');
+      await _markUploadFailed(msgRef);
+      return;
+    }
+  }
+
+  Future<void> retryMediaUpload({required MessageModel message}) async {
+    if (message.messageType == MessageType.text) {
+      throw Exception('Cannot retry a text message');
+    }
+    final localPath = message.localPath;
+    if (localPath == null || localPath.isEmpty) {
+      print('Retry failed: file missing');
+      await _markUploadFailed(_fs.messages(message.chatId).doc(message.id));
+      return;
+    }
+    final file = File(localPath);
+    final exists = await file.exists();
+    print('Local file: ${file.path}');
+    print('File exists: $exists');
+    if (!exists) {
+      print('Retry failed: file missing');
+      await _markUploadFailed(_fs.messages(message.chatId).doc(message.id));
+      return;
+    }
+
+    final bytes = await file.readAsBytes();
+    final retryFileName = localPath.split(Platform.pathSeparator).last;
+    final ext = _extOf(localPath);
+    final mediaType = _mediaTypeFor('', '', message.messageType);
+    final contentType = _contentTypeForMediaType(mediaType, ext);
+    final isGroup = message.receiverId.isEmpty;
+    final bucket = getBucket(isGroup: isGroup, type: mediaType);
+    final uid = _auth.currentUser!.uid;
+    // Always generate a fresh path on retry; never reuse previous broken path.
+    final path = _buildUniqueMediaPath(
+      chatId: message.chatId,
+      senderId: uid,
+      fileName: retryFileName,
+      messageId: null,
+    );
+    final mediaPath = '$bucket/$path';
+
+    final msgRef = _fs.messages(message.chatId).doc(message.id);
+    await msgRef.set({
+      'status': 1,
+      'uploadStatus': 'uploading',
+      'uploadProgress': 0.0,
+      'mediaPath': mediaPath,
+      'storagePath': path,
+    }, SetOptions(merge: true));
+    print('MEDIA PATH SAVED: $mediaPath');
+
+    try {
+      await _uploadWithProgress(
+        bucket: bucket,
+        path: path,
+        fileLabel: localPath,
+        bytes: bytes,
+        contentType: contentType,
+        localFilePath: localPath,
+        onProgress: (value) {
+          unawaited(
+            msgRef.set({'uploadProgress': value}, SetOptions(merge: true)),
+          );
+        },
+      );
+
+      // Generate stable public URL after successful upload
+      final publicUrl = getPublicUrl(bucket, path);
+
+      await msgRef.set({
+        'mediaPath': mediaPath,
+        'storagePath': path,
+        if (publicUrl != null) 'mediaUrl': publicUrl,
+        'status': 1,
+        'uploadStatus': 'done',
+        'uploadProgress': 1.0,
+        'cachedPath': localPath,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      print('UPLOAD ERROR: $e');
+      await _markUploadFailed(msgRef);
+      return;
+    }
+  }
+
+  String _contentTypeForMediaType(String mediaType, String ext) {
+    switch (mediaType) {
+      case 'image':
+        if (ext == 'png') return 'image/png';
+        if (ext == 'webp') return 'image/webp';
+        return 'image/jpeg';
+      case 'video':
+        if (ext == 'webm') return 'video/webm';
+        if (ext == 'mov') return 'video/quicktime';
+        return 'video/mp4';
+      case 'audio':
+        if (ext == 'mp3') return 'audio/mpeg';
+        if (ext == 'ogg') return 'audio/ogg';
+        if (ext == 'm4a') return 'audio/mp4';
+        return 'audio/wav';
+      default:
+        if (ext == 'pdf') return 'application/pdf';
+        if (ext == 'zip') return 'application/zip';
+        if (ext == 'rar') return 'application/vnd.rar';
+        return 'application/octet-stream';
     }
   }
 
@@ -688,9 +1129,7 @@ class ChatService {
     if (uid == null) return;
     try {
       await _fs.dmChats.doc(chatId).set({
-        'lastRead': {
-          uid: FieldValue.serverTimestamp(),
-        },
+        'lastRead': {uid: FieldValue.serverTimestamp()},
       }, SetOptions(merge: true));
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') return;

@@ -1,39 +1,145 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 import 'package:pdfx/pdfx.dart';
+import 'package:photo_view/photo_view.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:math' as math;
 import '../models/message_model.dart';
-import '../services/supabase_service.dart';
-import '../services/storage_service.dart';
+import '../providers/chat_providers.dart';
 import '../theme/theme.dart';
 
 Future<String> _resolveMediaUrl(String raw, MessageType type) {
   if (raw.isEmpty) {
     return Future.error(StateError('Empty media url'));
   }
-  // sb://bucket/path or https://... or any other url
-  if (raw.startsWith('sb://') ||
-      raw.startsWith('http://') ||
-      raw.startsWith('https://')) {
-    return SupabaseService.instance.resolveUrl(directUrl: raw);
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    return Future.value(raw);
   }
-  // Raw storage path: sign using the right bucket.
-  final bucket = type == MessageType.audio
-      ? StorageService().audioBucket
-      : StorageService().mediaBucket;
-  return SupabaseService.instance.resolveUrl(bucket: bucket, path: raw);
+
+  String path = raw;
+  if (raw.startsWith('sb://')) {
+    final sbPath = raw.substring(5);
+    final slash = sbPath.indexOf('/');
+    if (slash > 0) {
+      path = sbPath.substring(slash + 1);
+    }
+  } else if (raw.startsWith('chatMedia/')) {
+    path = raw.substring('chatMedia/'.length);
+  }
+
+  return Supabase.instance.client.storage.from('chatMedia').createSignedUrl(
+    path,
+    3600,
+  );
+}
+
+String? _bestExistingLocalPath(MessageModel message) {
+  final cached = message.cachedPath;
+  if (cached != null && cached.isNotEmpty && File(cached).existsSync()) {
+    return cached;
+  }
+  final local = message.localPath;
+  if (local != null && local.isNotEmpty && File(local).existsSync()) {
+    return local;
+  }
+  return null;
+}
+
+class _UploadStatusOverlay extends StatelessWidget {
+  final String status;
+  final double progress;
+  final RetryUpload onRetry;
+  const _UploadStatusOverlay({
+    required this.status,
+    required this.progress,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (status == 'failed') {
+      return Positioned(
+        right: 8,
+        top: 8,
+        child: InkWell(
+          onTap: onRetry,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: const BoxDecoration(
+              color: Colors.black54,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.refresh_rounded, size: 16, color: Colors.white),
+          ),
+        ),
+      );
+    }
+    if (status != 'uploading') {
+      return const SizedBox.shrink();
+    }
+    final pct = (progress.clamp(0.0, 1.0) * 100).round();
+    return Positioned(
+      right: 8,
+      top: 8,
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: const BoxDecoration(
+          color: Colors.black54,
+          shape: BoxShape.circle,
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(5),
+              child: CircularProgressIndicator(
+                value: progress.clamp(0.0, 1.0),
+                strokeWidth: 2,
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                backgroundColor: Colors.white24,
+              ),
+            ),
+            Center(
+              child: Text(
+                '$pct',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  height: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _AudioPendingInline extends StatelessWidget {
   final bool isMe;
   final String status; // uploading | failed
-  const _AudioPendingInline({required this.isMe, required this.status});
+  final double progress;
+  final RetryUpload? onRetry;
+  const _AudioPendingInline({
+    required this.isMe,
+    required this.status,
+    required this.progress,
+    this.onRetry,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +178,7 @@ class _AudioPendingInline extends StatelessWidget {
             child: Align(
               alignment: Alignment.centerLeft,
               child: FractionallySizedBox(
-                widthFactor: status == 'failed' ? 1.0 : 0.55,
+                widthFactor: status == 'failed' ? 1.0 : progress.clamp(0.0, 1.0),
                 child: Container(
                   height: 6,
                   decoration: BoxDecoration(
@@ -85,13 +191,22 @@ class _AudioPendingInline extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Text(
-            label,
+            status == 'uploading'
+                ? '${(progress.clamp(0.0, 1.0) * 100).round()}%'
+                : label,
             style: const TextStyle(
               fontSize: 12,
               color: Colors.white70,
               fontWeight: FontWeight.w500,
             ),
           ),
+          if (status == 'failed' && onRetry != null) ...[
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: onRetry,
+              child: const Icon(Icons.refresh_rounded, size: 18, color: Colors.white),
+            ),
+          ],
         ],
       ),
     );
@@ -109,24 +224,47 @@ class FilePreviewWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final url = message.mediaUrl ?? '';
+    return _FilePreviewContent(message: message, isMe: isMe);
+  }
+}
+
+typedef RetryUpload = Future<void> Function();
+
+class _FilePreviewContent extends ConsumerWidget {
+  final MessageModel message;
+  final bool isMe;
+  const _FilePreviewContent({
+    required this.message,
+    required this.isMe,
+  });
+
+  Future<void> _retryUpload(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref.read(chatServiceProvider).retryMediaUpload(message: message);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Retry failed: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final retry = () => _retryUpload(context, ref);
     switch (message.messageType) {
       case MessageType.image:
-        return _ImagePreview(message: message, isMe: isMe);
+        return _ImagePreview(message: message, isMe: isMe, onRetry: retry);
       case MessageType.video:
-        return _VideoPreview(message: message, isMe: isMe);
+        return _VideoPreview(message: message, isMe: isMe, onRetry: retry);
       case MessageType.audio:
-        if (message.uploadStatus != 'done') {
-          return _AudioPendingInline(isMe: isMe, status: message.uploadStatus);
-        }
-        return _AudioInline(url: url, type: message.messageType, isMe: isMe);
+        return _AudioInline(message: message, isMe: isMe, onRetry: retry);
       case MessageType.file:
       default:
         return _FileTile(
-          url: url,
-          type: message.messageType,
+          message: message,
           isMe: isMe,
-          sizeBytes: message.mediaSize,
+          onRetry: retry,
         );
     }
   }
@@ -135,7 +273,12 @@ class FilePreviewWidget extends StatelessWidget {
 class _ImagePreview extends StatefulWidget {
   final MessageModel message;
   final bool isMe;
-  const _ImagePreview({required this.message, required this.isMe});
+  final RetryUpload onRetry;
+  const _ImagePreview({
+    required this.message,
+    required this.isMe,
+    required this.onRetry,
+  });
   @override
   State<_ImagePreview> createState() => _ImagePreviewState();
 }
@@ -159,7 +302,9 @@ class _ImagePreviewState extends State<_ImagePreview> {
     super.didUpdateWidget(oldWidget);
     final oldUrl = oldWidget.message.mediaUrl;
     final newUrl = widget.message.mediaUrl;
-    if (oldUrl != newUrl) {
+    final oldLocal = _bestExistingLocalPath(oldWidget.message);
+    final newLocal = _bestExistingLocalPath(widget.message);
+    if (oldUrl != newUrl || oldLocal != newLocal) {
       setState(() {
         _resolved = null;
         _aspectRatio = null;
@@ -170,6 +315,16 @@ class _ImagePreviewState extends State<_ImagePreview> {
   }
 
   Future<void> _init() async {
+    final local = _bestExistingLocalPath(widget.message);
+    if (local != null) {
+      if (!mounted) return;
+      setState(() {
+        _resolved = null;
+        _ready = true;
+      });
+      return;
+    }
+
     final v = widget.message.mediaUrl ?? '';
     if (v.isEmpty) {
       if (!mounted) return;
@@ -234,8 +389,7 @@ class _ImagePreviewState extends State<_ImagePreview> {
 
   @override
   Widget build(BuildContext context) {
-    final local = widget.message.localPath;
-    final uploading = widget.message.uploadStatus == 'uploading';
+    final local = _bestExistingLocalPath(widget.message);
 
     final maxW = MediaQuery.of(context).size.width * 0.65;
     const minSize = 140.0;
@@ -288,16 +442,11 @@ class _ImagePreviewState extends State<_ImagePreview> {
                             icon: Icons.broken_image_outlined,
                           ),
                         ),
-                        if (uploading)
-                          const Positioned(
-                            right: 8,
-                            top: 8,
-                            child: SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          ),
+                        _UploadStatusOverlay(
+                          status: widget.message.uploadStatus,
+                          progress: widget.message.uploadProgress,
+                          onRetry: widget.onRetry,
+                        ),
                       ],
                     )
                   : const _MediaErrorBox(icon: Icons.broken_image_outlined),
@@ -361,7 +510,7 @@ class _ImagePreviewState extends State<_ImagePreview> {
               children: [
                 AnimatedSwitcher(
                   duration: const Duration(milliseconds: 200),
-                  child: (local != null && local.isNotEmpty && uploading)
+                  child: (local != null && local.isNotEmpty)
                       ? Image(
                           key: ValueKey('local_${widget.message.id}'),
                           image: FileImage(File(local)),
@@ -374,7 +523,7 @@ class _ImagePreviewState extends State<_ImagePreview> {
                         )
                       : Image(
                           key: ValueKey('network_${widget.message.id}'),
-                          image: NetworkImage(_resolved!),
+                          image: CachedNetworkImageProvider(_resolved!),
                           fit: BoxFit.cover,
                           width: double.infinity,
                           height: double.infinity,
@@ -383,16 +532,11 @@ class _ImagePreviewState extends State<_ImagePreview> {
                           ),
                         ),
                 ),
-                if (uploading)
-                  const Positioned(
-                    right: 8,
-                    top: 8,
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
+                _UploadStatusOverlay(
+                  status: widget.message.uploadStatus,
+                  progress: widget.message.uploadProgress,
+                  onRetry: widget.onRetry,
+                ),
                 Positioned(
                   right: 6,
                   bottom: 6,
@@ -471,7 +615,12 @@ class _ShimmerBoxState extends State<_ShimmerBox>
 class _VideoPreview extends StatefulWidget {
   final MessageModel message;
   final bool isMe;
-  const _VideoPreview({required this.message, required this.isMe});
+  final RetryUpload onRetry;
+  const _VideoPreview({
+    required this.message,
+    required this.isMe,
+    required this.onRetry,
+  });
   @override
   State<_VideoPreview> createState() => _VideoPreviewState();
 }
@@ -480,6 +629,7 @@ class _VideoPreviewState extends State<_VideoPreview> {
   late Future<String> _resolvedFuture;
   VideoPlayerController? _controller;
   String? _resolvedUrl;
+  bool _cacheWriteStarted = false;
 
   static const Duration _resolveTimeout = Duration(seconds: 6);
 
@@ -494,15 +644,22 @@ class _VideoPreviewState extends State<_VideoPreview> {
     super.didUpdateWidget(oldWidget);
     final oldUrl = oldWidget.message.mediaUrl;
     final newUrl = widget.message.mediaUrl;
-    if (oldUrl != newUrl) {
+    final oldLocal = _bestExistingLocalPath(oldWidget.message);
+    final newLocal = _bestExistingLocalPath(widget.message);
+    if (oldUrl != newUrl || oldLocal != newLocal) {
       setState(() {
         _resolvedFuture = _resolve();
+        _cacheWriteStarted = false;
       });
       _disposeController();
     }
   }
 
   Future<String> _resolve() async {
+    final local = _bestExistingLocalPath(widget.message);
+    if (local != null) {
+      return local;
+    }
     final v = widget.message.mediaUrl ?? '';
     if (v.isEmpty) {
       throw StateError('Empty video url');
@@ -511,6 +668,28 @@ class _VideoPreviewState extends State<_VideoPreview> {
       v,
       widget.message.messageType,
     ).timeout(_resolveTimeout);
+  }
+
+  Future<void> _cacheRemoteIfNeeded(String resolved) async {
+    if (_cacheWriteStarted) return;
+    final local = _bestExistingLocalPath(widget.message);
+    if (local != null) return;
+    if (!(resolved.startsWith('http://') || resolved.startsWith('https://'))) {
+      return;
+    }
+    _cacheWriteStarted = true;
+    try {
+      final file = await DefaultCacheManager().getSingleFile(resolved);
+      if (!file.existsSync()) return;
+      await FirebaseFirestore.instance
+          .collection('dmChats')
+          .doc(widget.message.chatId)
+          .collection('messages')
+          .doc(widget.message.id)
+          .set({'cachedPath': file.path}, SetOptions(merge: true));
+    } catch (_) {
+      _cacheWriteStarted = false;
+    }
   }
 
   @override
@@ -531,7 +710,11 @@ class _VideoPreviewState extends State<_VideoPreview> {
 
     _disposeController();
     _resolvedUrl = resolvedUrl;
-    final c = VideoPlayerController.networkUrl(Uri.parse(resolvedUrl));
+    final isRemote =
+      resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://');
+    final c = isRemote
+      ? VideoPlayerController.networkUrl(Uri.parse(resolvedUrl))
+      : VideoPlayerController.file(File(resolvedUrl));
     _controller = c;
     try {
       await c.initialize();
@@ -545,7 +728,6 @@ class _VideoPreviewState extends State<_VideoPreview> {
 
   @override
   Widget build(BuildContext context) {
-    final uploading = widget.message.uploadStatus == 'uploading';
     final thumb = widget.message.thumbnailUrl;
 
     final maxW = MediaQuery.of(context).size.width * 0.65;
@@ -590,16 +772,11 @@ class _VideoPreviewState extends State<_VideoPreview> {
                         color: Colors.white,
                       ),
                     ),
-                    if (uploading)
-                      const Positioned(
-                        right: 8,
-                        top: 8,
-                        child: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
+                    _UploadStatusOverlay(
+                      status: widget.message.uploadStatus,
+                      progress: widget.message.uploadProgress,
+                      onRetry: widget.onRetry,
+                    ),
                     Positioned(
                       right: 6,
                       bottom: 6,
@@ -678,6 +855,7 @@ class _VideoPreviewState extends State<_VideoPreview> {
         final resolved = snap.data;
 
         if (resolved != null && resolved.isNotEmpty) {
+          unawaited(_cacheRemoteIfNeeded(resolved));
           // Initialize controller to show first frame as a thumbnail.
           unawaited(_ensureController(resolved));
         }
@@ -754,6 +932,11 @@ class _VideoPreviewState extends State<_VideoPreview> {
                       isPending: widget.message.hasPendingWrites,
                     ),
                   ),
+                  _UploadStatusOverlay(
+                    status: widget.message.uploadStatus,
+                    progress: widget.message.uploadProgress,
+                    onRetry: widget.onRetry,
+                  ),
                   Positioned.fill(
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
@@ -781,13 +964,13 @@ class _VideoPreviewState extends State<_VideoPreview> {
 }
 
 class _AudioInline extends StatefulWidget {
-  final String url;
-  final MessageType type;
+  final MessageModel message;
   final bool isMe;
+  final RetryUpload onRetry;
   const _AudioInline({
-    required this.url,
-    required this.type,
+    required this.message,
     required this.isMe,
+    required this.onRetry,
   });
   @override
   State<_AudioInline> createState() => _AudioInlineState();
@@ -800,6 +983,7 @@ class _AudioInlineState extends State<_AudioInline> {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   late final List<double> _bars;
+  bool _cacheWriteStarted = false;
   StreamSubscription<Duration>? _posSub;
   StreamSubscription<Duration?>? _durSub;
   StreamSubscription<PlayerState>? _stateSub;
@@ -808,19 +992,64 @@ class _AudioInlineState extends State<_AudioInline> {
   void initState() {
     super.initState();
     _player = AudioPlayer();
-    _bars = _generateBars(widget.url);
+    _bars = _generateBars(widget.message.mediaUrl ?? widget.message.id);
     _init();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AudioInline oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldLocal = _bestExistingLocalPath(oldWidget.message);
+    final newLocal = _bestExistingLocalPath(widget.message);
+    final oldUrl = oldWidget.message.mediaUrl;
+    final newUrl = widget.message.mediaUrl;
+    if (oldLocal != newLocal || oldUrl != newUrl) {
+      _cacheWriteStarted = false;
+      _error = null;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _loading = true;
+      unawaited(_init());
+    }
+  }
+
+  Future<void> _cacheRemoteIfNeeded(String resolved) async {
+    if (_cacheWriteStarted) return;
+    if (!(resolved.startsWith('http://') || resolved.startsWith('https://'))) {
+      return;
+    }
+    if (_bestExistingLocalPath(widget.message) != null) return;
+    _cacheWriteStarted = true;
+    try {
+      final file = await DefaultCacheManager().getSingleFile(resolved);
+      if (!file.existsSync()) return;
+      await FirebaseFirestore.instance
+          .collection('dmChats')
+          .doc(widget.message.chatId)
+          .collection('messages')
+          .doc(widget.message.id)
+          .set({'cachedPath': file.path}, SetOptions(merge: true));
+    } catch (_) {
+      _cacheWriteStarted = false;
+    }
   }
 
   Future<void> _init() async {
     try {
-      final v = widget.url;
-      if (v.isEmpty) {
-        _error = StateError('Empty audio url');
-        return;
+      final local = _bestExistingLocalPath(widget.message);
+      if (local != null) {
+        await _player.setAudioSource(AudioSource.file(local));
+      } else {
+        final v = widget.message.mediaUrl ?? '';
+        if (v.isEmpty) {
+          _error = StateError('Empty audio url');
+          return;
+        }
+        final u = await _resolveMediaUrl(v, widget.message.messageType);
+        await _cacheRemoteIfNeeded(u);
+        await _player.setUrl(u);
       }
-      final u = await _resolveMediaUrl(v, widget.type);
-      await _player.setUrl(u);
+
       _duration = _player.duration ?? Duration.zero;
 
       await _posSub?.cancel();
@@ -863,6 +1092,23 @@ class _AudioInlineState extends State<_AudioInline> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.message.uploadStatus == 'failed') {
+      return _AudioPendingInline(
+        isMe: widget.isMe,
+        status: widget.message.uploadStatus,
+        progress: widget.message.uploadProgress,
+        onRetry: widget.onRetry,
+      );
+    }
+    if (widget.message.uploadStatus == 'uploading' &&
+        _bestExistingLocalPath(widget.message) == null) {
+      return _AudioPendingInline(
+        isMe: widget.isMe,
+        status: widget.message.uploadStatus,
+        progress: widget.message.uploadProgress,
+      );
+    }
+
     if (_loading) {
       return const SizedBox(
         width: 220,
@@ -879,17 +1125,19 @@ class _AudioInlineState extends State<_AudioInline> {
         borderRadius: BorderRadius.circular(14),
         child: ColoredBox(
           color: bg,
-          child: const SizedBox(
+          child: SizedBox(
             width: 260,
             height: 54,
             child: Row(
               children: [
-                SizedBox(width: 12),
-                Icon(Icons.volume_off, color: Colors.white),
-                SizedBox(width: 10),
+                const SizedBox(width: 12),
+                const Icon(Icons.volume_off, color: Colors.white),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Audio unavailable',
+                    widget.message.uploadStatus == 'failed'
+                        ? 'Audio failed'
+                        : 'Audio unavailable',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -898,7 +1146,15 @@ class _AudioInlineState extends State<_AudioInline> {
                     ),
                   ),
                 ),
-                SizedBox(width: 12),
+                if (widget.message.uploadStatus == 'failed')
+                  IconButton(
+                    onPressed: widget.onRetry,
+                    icon: const Icon(
+                      Icons.refresh_rounded,
+                      color: Colors.white,
+                    ),
+                  ),
+                const SizedBox(width: 12),
               ],
             ),
           ),
@@ -1076,15 +1332,13 @@ List<double> _generateBars(String seed) {
 }
 
 class _FileTile extends StatelessWidget {
-  final String url;
-  final MessageType type;
+  final MessageModel message;
   final bool isMe;
-  final int? sizeBytes;
+  final RetryUpload onRetry;
   const _FileTile({
-    required this.url,
-    required this.type,
+    required this.message,
     required this.isMe,
-    required this.sizeBytes,
+    required this.onRetry,
   });
 
   String _ext(String name) {
@@ -1125,16 +1379,40 @@ class _FileTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final local = _bestExistingLocalPath(message);
+    final rawUrl = message.mediaUrl ?? '';
     return FutureBuilder<String>(
       future: () async {
-        return _resolveMediaUrl(url, type);
+        if (local != null) return local;
+        if (rawUrl.isEmpty) {
+          throw StateError('Empty file url');
+        }
+        final resolved = await _resolveMediaUrl(rawUrl, message.messageType);
+        if ((resolved.startsWith('http://') || resolved.startsWith('https://')) &&
+            message.cachedPath == null) {
+          try {
+            final file = await DefaultCacheManager().getSingleFile(resolved);
+            if (file.existsSync()) {
+              await FirebaseFirestore.instance
+                  .collection('dmChats')
+                  .doc(message.chatId)
+                  .collection('messages')
+                  .doc(message.id)
+                  .set({'cachedPath': file.path}, SetOptions(merge: true));
+            }
+          } catch (_) {}
+        }
+        return resolved;
       }(),
       builder: (context, snap) {
-        final name = url.split('/').last;
+        final nameSource = local ?? rawUrl;
+        final name = nameSource.split('/').last;
         const tc = Color(0xFFFFFFFF);
         final ext = _ext(name);
-        final sizeLabel = _fmtSize(sizeBytes);
+        final sizeLabel = _fmtSize(message.mediaSize);
         final bg = isMe ? AppColors.navy : AppColors.surface;
+        final uploading = message.uploadStatus == 'uploading';
+        final failed = message.uploadStatus == 'failed';
         return GestureDetector(
           onTap: () {
             if (!snap.hasData) return;
@@ -1144,61 +1422,74 @@ class _FileTile extends StatelessWidget {
           },
           child: ClipRRect(
             borderRadius: BorderRadius.circular(14),
-            child: ColoredBox(
-              color: bg,
-              child: SizedBox(
-                width: 260,
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: 40,
-                        height: 40,
-                        child: Center(
-                          child: Icon(_iconForExt(ext), color: tc, size: 22),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: tc,
-                                fontWeight: FontWeight.w700,
-                                height: 1.2,
-                              ),
+            child: Stack(
+              children: [
+                ColoredBox(
+                  color: bg,
+                  child: SizedBox(
+                    width: 260,
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: Center(
+                              child: Icon(_iconForExt(ext), color: tc, size: 22),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              [
-                                if (ext.isNotEmpty) ext,
-                                if (sizeLabel.isNotEmpty) sizeLabel,
-                              ].join(' - '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: tc,
-                                fontSize: 11,
-                                height: 1.2,
-                              ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  name,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: tc,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.2,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  [
+                                    if (ext.isNotEmpty) ext,
+                                    if (sizeLabel.isNotEmpty) sizeLabel,
+                                  ].join(' - '),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: tc,
+                                    fontSize: 11,
+                                    height: 1.2,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.open_in_new, color: tc, size: 18),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      const Icon(Icons.open_in_new, color: tc, size: 18),
-                    ],
+                    ),
                   ),
                 ),
-              ),
+                if (uploading || failed)
+                  Positioned.fill(
+                    child: ColoredBox(color: Colors.black26),
+                  ),
+                _UploadStatusOverlay(
+                  status: message.uploadStatus,
+                  progress: message.uploadProgress,
+                  onRetry: onRetry,
+                ),
+              ],
             ),
           ),
         );

@@ -16,6 +16,7 @@ import 'screens/group/create_group_screen.dart';
 import 'screens/chat/group_chat_detail_screen.dart';
 import 'screens/group/group_settings_screen.dart';
 import 'screens/group/group_permissions_screen.dart';
+import 'screens/group/moderation_dashboard_screen.dart';
 import 'screens/group/join_group_screen.dart';
 import 'ui/splash/splash_screen.dart';
 
@@ -131,6 +132,13 @@ class _AppState extends ConsumerState<App> {
           return MaterialPageRoute(
             builder: (_) =>
                 GroupPermissionsScreen(chatId: args['chatId'] as String),
+          );
+        }
+        if (settings.name == ModerationDashboardScreen.routeName) {
+          final args = settings.arguments as Map<String, dynamic>;
+          return MaterialPageRoute(
+            builder: (_) =>
+                ModerationDashboardScreen(chatId: args['chatId'] as String),
           );
         }
         if (settings.name == ChatContactInfoScreen.routeName) {

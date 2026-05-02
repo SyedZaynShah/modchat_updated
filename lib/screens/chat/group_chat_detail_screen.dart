@@ -1,6 +1,8 @@
 ﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:async';
+import 'dart:ui';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -38,7 +40,9 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
   final ValueNotifier<String?> _highlightId = ValueNotifier(null);
   final ValueNotifier<String?> _selectedMessageId = ValueNotifier(null);
   final ValueNotifier<int> _slowRemainingSec = ValueNotifier<int>(0);
+  final ValueNotifier<int> _banRemainingSec = ValueNotifier<int>(0);
   DateTime? _slowLastSentAtOverride;
+  Timer? _banTicker;
   bool? _lastSlowEnabled;
   int? _lastSlowDuration;
   int? _lastSlowLastSentAtMs;
@@ -309,7 +313,9 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
     _highlightId.dispose();
     _selectedMessageId.dispose();
     _slowTick?.cancel();
+    _banTicker?.cancel();
     _slowRemainingSec.dispose();
+    _banRemainingSec.dispose();
     _pinnedOverride.dispose();
     for (final t in _reactionSyncTimers.values) {
       t.cancel();
@@ -342,6 +348,33 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
         state == AppLifecycleState.detached) {
       _typingController.onLeaveChat(widget.chatId);
     }
+  }
+
+  void _syncBanTimer(Timestamp? bannedUntil) {
+    _banTicker?.cancel();
+    if (bannedUntil == null) {
+      if (_banRemainingSec.value != 0) _banRemainingSec.value = 0;
+      return;
+    }
+
+    void tick() {
+      final remaining = bannedUntil.toDate().difference(DateTime.now());
+      final sec = remaining.inSeconds;
+      final safeSec = sec > 0 ? sec : 0;
+
+      if (safeSec != _banRemainingSec.value) {
+        _banRemainingSec.value = safeSec;
+      }
+
+      // Instant unban: force rebuild when ban expires
+      if (remaining <= Duration.zero && mounted) {
+        _banTicker?.cancel();
+        setState(() {});
+      }
+    }
+
+    tick();
+    _banTicker = Timer.periodic(const Duration(seconds: 1), (_) => tick());
   }
 
   void _updateSlowRemaining({
@@ -860,7 +893,8 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
     );
     final ids = messages.map((m) => m.id).toSet();
 
-    if (_cachedUnreadMessageId != null && !ids.contains(_cachedUnreadMessageId)) {
+    if (_cachedUnreadMessageId != null &&
+        !ids.contains(_cachedUnreadMessageId)) {
       _cachedUnreadMessageId = null;
     }
     if (computed == null) {
@@ -874,6 +908,66 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
   @override
   Widget build(BuildContext context) {
     final me = FirebaseAuth.instance.currentUser!.uid;
+
+    // Gate: wait for member moderation state before rendering anything
+    final memberAsync = ref.watch(
+      groupMemberDocProvider((chatId: widget.chatId, uid: me)),
+    );
+
+    return memberAsync.when(
+      loading: () {
+        // Premium loading gate - no flicker possible
+        return const Scaffold(
+          backgroundColor: Color(0xFF0B0F1A),
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.lock_outline, size: 34, color: Colors.white54),
+                SizedBox(height: 16),
+                Text(
+                  'Checking access...',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+      error: (_, __) {
+        return const Scaffold(
+          body: Center(child: Text('Something went wrong')),
+        );
+      },
+      data: (memberSnap) {
+        final memberData = memberSnap.data() ?? const <String, dynamic>{};
+        final bannedUntilTs = memberData['bannedUntil'];
+        final bannedUntil = bannedUntilTs is Timestamp ? bannedUntilTs : null;
+        final banReason = (memberData['banReason'] as String?)?.trim();
+        final isBanned =
+            bannedUntil != null &&
+            DateTime.now().isBefore(bannedUntil.toDate());
+
+        _syncBanTimer(bannedUntil);
+
+        if (isBanned) {
+          // Banned: show overlay immediately, no chat UI ever renders
+          return Scaffold(
+            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+            body: _BannedOverlay(
+              reason: banReason,
+              remainingSec: _banRemainingSec,
+            ),
+          );
+        }
+
+        // Not banned: proceed to actual chat
+        return _buildChatUI(me, memberData);
+      },
+    );
+  }
+
+  Widget _buildChatUI(String me, Map<String, dynamic> memberData) {
     final messages = ref.watch(messagesProvider(widget.chatId));
     final hides = ref.watch(hidesProvider(widget.chatId));
     final fs = FirestoreService();
@@ -925,6 +1019,12 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                   muteUntil != null &&
                   DateTime.now().isBefore(muteUntil.toDate());
 
+              // Live ban check for real-time updates while in chat
+              final bannedUntilLive = memberData['bannedUntil'];
+              final isBanned =
+                  bannedUntilLive is Timestamp &&
+                  DateTime.now().isBefore(bannedUntilLive.toDate());
+
               final moderation = Map<String, dynamic>.from(
                 (data?['moderation'] as Map?) ?? const {},
               );
@@ -946,6 +1046,14 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('You were removed from this group'),
+                    ),
+                  );
+                  return;
+                }
+                if (isBanned) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('You are banned from this group'),
                     ),
                   );
                   return;
@@ -999,8 +1107,8 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                         text: text,
                         replyTo: reply?.toMap(),
                       );
-                      await _touchLastRead(force: true);
-                      _cachedUnreadMessageId = null;
+                  await _touchLastRead(force: true);
+                  _cachedUnreadMessageId = null;
                 } catch (_) {
                   _slowLastSentAtOverride = prevOverride;
                   _updateSlowRemaining(
@@ -1031,6 +1139,14 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('You were removed from this group'),
+                    ),
+                  );
+                  return;
+                }
+                if (isBanned) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('You are banned from this group'),
                     ),
                   );
                   return;
@@ -1090,8 +1206,8 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                         audioDurationMs: durationMs,
                         replyTo: reply?.toMap(),
                       );
-                      await _touchLastRead(force: true);
-                      _cachedUnreadMessageId = null;
+                  await _touchLastRead(force: true);
+                  _cachedUnreadMessageId = null;
                 } catch (_) {
                   _slowLastSentAtOverride = prevOverride;
                   _updateSlowRemaining(
@@ -1226,11 +1342,12 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                                                 ),
                                           )
                                           .toList();
-                                      final unreadBoundaryId = _resolveUnreadBoundaryId(
-                                        messages: filtered,
-                                        chatData: data,
-                                        currentUid: me,
-                                      );
+                                      final unreadBoundaryId =
+                                          _resolveUnreadBoundaryId(
+                                            messages: filtered,
+                                            chatData: data,
+                                            currentUid: me,
+                                          );
                                       _syncReplyTargetWithMessages(filtered);
                                       final display = filtered.reversed
                                           .toList();
@@ -1443,7 +1560,8 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                                                                 milliseconds:
                                                                     200,
                                                               ),
-                                                          child: showUnreadDivider
+                                                          child:
+                                                              showUnreadDivider
                                                               ? const _UnreadDivider(
                                                                   key: ValueKey(
                                                                     'group_unread_divider',
@@ -1458,166 +1576,180 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                                                         KeyedSubtree(
                                                           key: ValueKey(m.id),
                                                           child: Align(
-                                                        alignment: isMe
-                                                            ? Alignment
-                                                                  .centerRight
-                                                            : Alignment
-                                                                  .centerLeft,
-                                                        child: ValueListenableBuilder<String?>(
-                                                          valueListenable:
-                                                              _highlightId,
-                                                          builder: (context, hid, _) {
-                                                            final highlighted =
-                                                                hid == m.id;
-                                                            final key = _messageKeys
-                                                                .putIfAbsent(
-                                                                  m.id,
-                                                                  () =>
-                                                                      GlobalKey(),
-                                                                );
-                                                            return ValueListenableBuilder<
-                                                              String?
-                                                            >(
+                                                            alignment: isMe
+                                                                ? Alignment
+                                                                      .centerRight
+                                                                : Alignment
+                                                                      .centerLeft,
+                                                            child: ValueListenableBuilder<String?>(
                                                               valueListenable:
-                                                                  _selectedMessageId,
-                                                              builder: (context, sid, __) {
-                                                                final selected =
-                                                                    sid == m.id;
-                                                                final theme = Theme.of(
-                                                                  context,
-                                                                );
-                                                                final isLight =
-                                                                    theme.brightness ==
-                                                                    Brightness.light;
-                                                                final bg =
-                                                                    highlighted
-                                                                    ? (isLight
-                                                                          ? const Color(0xFF5865F2)
-                                                                                .withOpacity(0.15)
-                                                                          : const Color(0xFF5865F2)
-                                                                                .withOpacity(0.25))
-                                                                    : (selected
-                                                                          ? const Color(
-                                                                              0xFF1A1A1A,
-                                                                            ).withOpacity(
-                                                                              0.12,
-                                                                            )
-                                                                          : Colors.transparent);
-                                                                final pad =
-                                                                    highlighted
-                                                                    ? const EdgeInsets.symmetric(
-                                                                        horizontal:
-                                                                            6,
-                                                                        vertical:
-                                                                            4,
-                                                                      )
-                                                                    : EdgeInsets
-                                                                          .zero;
-                                                                return AnimatedContainer(
-                                                                  duration: const Duration(
-                                                                    milliseconds: 180,
-                                                                  ),
-                                                                  curve: Curves
-                                                                      .easeOut,
-                                                                  key: key,
-                                                                  decoration: BoxDecoration(
-                                                                    color: bg,
-                                                                    borderRadius:
-                                                                        BorderRadius.circular(
-                                                                          14,
-                                                                        ),
-                                                                    border: highlighted
-                                                                        ? Border.all(
-                                                                            color: const Color(0xFF5865F2),
-                                                                            width: 1,
-                                                                          )
-                                                                        : null,
-                                                                  ),
-                                                                  padding: pad,
-                                                                  child: SwipeToReply(
-                                                                    enabled: !m
-                                                                        .isDeletedForAll,
-                                                                    onReply: () =>
-                                                                        _replyTarget.value =
-                                                                            _toReplyTarget(
+                                                                  _highlightId,
+                                                              builder: (context, hid, _) {
+                                                                final highlighted =
+                                                                    hid == m.id;
+                                                                final key = _messageKeys
+                                                                    .putIfAbsent(
+                                                                      m.id,
+                                                                      () =>
+                                                                          GlobalKey(),
+                                                                    );
+                                                                return ValueListenableBuilder<
+                                                                  String?
+                                                                >(
+                                                                  valueListenable:
+                                                                      _selectedMessageId,
+                                                                  builder:
+                                                                      (
+                                                                        context,
+                                                                        sid,
+                                                                        __,
+                                                                      ) {
+                                                                        final selected =
+                                                                            sid ==
+                                                                            m.id;
+                                                                        final theme =
+                                                                            Theme.of(
+                                                                              context,
+                                                                            );
+                                                                        final isLight =
+                                                                            theme.brightness ==
+                                                                            Brightness.light;
+                                                                        final bg =
+                                                                            highlighted
+                                                                            ? (isLight
+                                                                                  ? const Color(
+                                                                                      0xFF5865F2,
+                                                                                    ).withOpacity(
+                                                                                      0.15,
+                                                                                    )
+                                                                                  : const Color(
+                                                                                      0xFF5865F2,
+                                                                                    ).withOpacity(
+                                                                                      0.25,
+                                                                                    ))
+                                                                            : (selected
+                                                                                  ? const Color(
+                                                                                      0xFF1A1A1A,
+                                                                                    ).withOpacity(
+                                                                                      0.12,
+                                                                                    )
+                                                                                  : Colors.transparent);
+                                                                        final pad =
+                                                                            highlighted
+                                                                            ? const EdgeInsets.symmetric(
+                                                                                horizontal: 6,
+                                                                                vertical: 4,
+                                                                              )
+                                                                            : EdgeInsets.zero;
+                                                                        return AnimatedContainer(
+                                                                          duration: const Duration(
+                                                                            milliseconds:
+                                                                                180,
+                                                                          ),
+                                                                          curve:
+                                                                              Curves.easeOut,
+                                                                          key:
+                                                                              key,
+                                                                          decoration: BoxDecoration(
+                                                                            color:
+                                                                                bg,
+                                                                            borderRadius: BorderRadius.circular(
+                                                                              14,
+                                                                            ),
+                                                                            border:
+                                                                                highlighted
+                                                                                ? Border.all(
+                                                                                    color: const Color(
+                                                                                      0xFF5865F2,
+                                                                                    ),
+                                                                                    width: 1,
+                                                                                  )
+                                                                                : null,
+                                                                          ),
+                                                                          padding:
+                                                                              pad,
+                                                                          child: SwipeToReply(
+                                                                            enabled:
+                                                                                !m.isDeletedForAll,
+                                                                            onReply: () => _replyTarget.value = _toReplyTarget(
                                                                               m,
                                                                             ),
-                                                                    child: GestureDetector(
-                                                                      onLongPress: () => _onMessageLongPress(
-                                                                        context,
-                                                                        m,
-                                                                        isMe,
-                                                                        isAdmin,
-                                                                        pinnedSet
-                                                                            .contains(
-                                                                              m.id,
-                                                                            ),
-                                                                      ),
-                                                                      child:
-                                                                          ValueListenableBuilder<
-                                                                            Map<
-                                                                              String,
-                                                                              int
-                                                                            >?
-                                                                          >(
-                                                                            valueListenable: _reactionOverrideNotifier(
-                                                                              m.id,
-                                                                            ),
-                                                                            builder:
-                                                                                (
-                                                                                  context,
-                                                                                  override,
-                                                                                  ___,
-                                                                                ) {
-                                                                                  return GroupMessageBubble(
-                                                                                    key: ValueKey(
+                                                                            child: GestureDetector(
+                                                                              onLongPress: () => _onMessageLongPress(
+                                                                                context,
+                                                                                m,
+                                                                                isMe,
+                                                                                isAdmin,
+                                                                                pinnedSet.contains(
+                                                                                  m.id,
+                                                                                ),
+                                                                              ),
+                                                                              child:
+                                                                                  ValueListenableBuilder<
+                                                                                    Map<
+                                                                                      String,
+                                                                                      int
+                                                                                    >?
+                                                                                  >(
+                                                                                    valueListenable: _reactionOverrideNotifier(
                                                                                       m.id,
                                                                                     ),
-                                                                                    message: m,
-                                                                                    isMe: isMe,
-                                                                                    showIdentity: showIdentity,
-                                                                                    zoom: bubbleZoom,
-                                                                                    bottomSpacing: bottomSpacing,
-                                                                                    groupChatId: widget.chatId,
-                                                                                    reactionsOverride: override,
-                                                                                    myReaction:
-                                                                                        _myReactionByMessageId[m.id] ??
-                                                                                        m.userReactions?[me],
-                                                                                    onReactionsTap: () =>
-                                                                                        _openReactionTray(m),
-                                                                                    isPinned: pinnedSet.contains(
-                                                                                      m.id,
-                                                                                    ),
-                                                                                    onOpenThread:
+                                                                                    builder:
                                                                                         (
-                                                                                          messageId,
+                                                                                          context,
+                                                                                          override,
+                                                                                          ___,
                                                                                         ) {
-                                                                                          Navigator.of(
-                                                                                            context,
-                                                                                          ).push(
-                                                                                            MaterialPageRoute(
-                                                                                              builder:
-                                                                                                  (
-                                                                                                    _,
-                                                                                                  ) => _ThreadScreen(
-                                                                                                    chatId: widget.chatId,
-                                                                                                    messageId: messageId,
-                                                                                                  ),
+                                                                                          return GroupMessageBubble(
+                                                                                            key: ValueKey(
+                                                                                              m.id,
                                                                                             ),
+                                                                                            message: m,
+                                                                                            isMe: isMe,
+                                                                                            showIdentity: showIdentity,
+                                                                                            zoom: bubbleZoom,
+                                                                                            bottomSpacing: bottomSpacing,
+                                                                                            groupChatId: widget.chatId,
+                                                                                            reactionsOverride: override,
+                                                                                            myReaction:
+                                                                                                _myReactionByMessageId[m.id] ??
+                                                                                                m.userReactions?[me],
+                                                                                            onReactionsTap: () => _openReactionTray(
+                                                                                              m,
+                                                                                            ),
+                                                                                            isPinned: pinnedSet.contains(
+                                                                                              m.id,
+                                                                                            ),
+                                                                                            onOpenThread:
+                                                                                                (
+                                                                                                  messageId,
+                                                                                                ) {
+                                                                                                  Navigator.of(
+                                                                                                    context,
+                                                                                                  ).push(
+                                                                                                    MaterialPageRoute(
+                                                                                                      builder:
+                                                                                                          (
+                                                                                                            _,
+                                                                                                          ) => _ThreadScreen(
+                                                                                                            chatId: widget.chatId,
+                                                                                                            messageId: messageId,
+                                                                                                          ),
+                                                                                                    ),
+                                                                                                  );
+                                                                                                },
+                                                                                            onReplyCardTap: _scrollToMessage,
                                                                                           );
                                                                                         },
-                                                                                    onReplyCardTap: _scrollToMessage,
-                                                                                  );
-                                                                                },
+                                                                                  ),
+                                                                            ),
                                                                           ),
-                                                                    ),
-                                                                  ),
+                                                                        );
+                                                                      },
                                                                 );
                                                               },
-                                                            );
-                                                          },
-                                                        ),
-                                                      ),
+                                                            ),
+                                                          ),
                                                         ),
                                                       ],
                                                     ),
@@ -1636,11 +1768,10 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                                       child: Text(
                                         'Error: $e',
                                         style: TextStyle(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface.withOpacity(
-                                            0.7,
-                                          ),
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.7),
                                         ),
                                       ),
                                     ),
@@ -1806,6 +1937,203 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
   }
 }
 
+class _BannedOverlay extends StatefulWidget {
+  final String? reason;
+  final ValueListenable<int> remainingSec;
+
+  const _BannedOverlay({required this.reason, required this.remainingSec});
+
+  @override
+  State<_BannedOverlay> createState() => _BannedOverlayState();
+}
+
+class _BannedOverlayState extends State<_BannedOverlay>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
+    _pulseController.repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  String _fmt(int total) {
+    final h = (total ~/ 3600).toString().padLeft(2, '0');
+    final m = ((total % 3600) ~/ 60).toString().padLeft(2, '0');
+    final s = (total % 60).toString().padLeft(2, '0');
+    return '$h:$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final r = (widget.reason ?? '').trim();
+    return IgnorePointer(
+      ignoring: false,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+              child: Container(color: Colors.black.withOpacity(0.82)),
+            ),
+          ),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 18,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: const Color(0xFFE24C4C).withOpacity(0.35),
+                    width: 1,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.45),
+                      blurRadius: 18,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedBuilder(
+                      animation: _pulseController,
+                      builder: (context, child) {
+                        final scale = 1.0 + (_pulseController.value * 0.08);
+                        return Transform.scale(
+                          scale: scale,
+                          child: Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: const Color(0xFFE24C4C).withOpacity(0.10),
+                              border: Border.all(
+                                color: const Color(
+                                  0xFFE24C4C,
+                                ).withOpacity(0.75),
+                                width: 1,
+                              ),
+                            ),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: const Icon(
+                        Icons.block,
+                        color: Color(0xFFE24C4C),
+                        size: 42,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Access restricted',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurface,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (r.isNotEmpty)
+                      Text(
+                        r,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface.withOpacity(0.72),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      ),
+                    const SizedBox(height: 14),
+                    ValueListenableBuilder<int>(
+                      valueListenable: widget.remainingSec,
+                      builder: (context, sec, _) {
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Unbanned in ${_fmt(sec)}',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Color(0xFFE24C4C),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Container(
+                              height: 4,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(999),
+                                color: Colors.white.withOpacity(0.08),
+                              ),
+                              alignment: Alignment.centerLeft,
+                              child: FractionallySizedBox(
+                                widthFactor: 1,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(999),
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        const Color(
+                                          0xFFE24C4C,
+                                        ).withOpacity(0.65),
+                                        const Color(
+                                          0xFFE24C4C,
+                                        ).withOpacity(0.25),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Your access to this conversation is temporarily disabled.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurface.withOpacity(0.55),
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _GroupTitle extends StatelessWidget {
   final String name;
   final int memberCount;
@@ -1910,7 +2238,9 @@ class _UnreadDivider extends StatelessWidget {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.55),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.55),
               ),
             ),
           ),
@@ -2017,5 +2347,3 @@ class _ThreadScreen extends StatelessWidget {
     );
   }
 }
-
-

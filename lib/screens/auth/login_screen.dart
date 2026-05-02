@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../providers/auth_providers.dart';
 import '../../theme/theme.dart';
+import '../../utils/auth_error_mapper.dart';
 import '../auth/signup_screen.dart';
 import '../../ui/widgets/auth_ui.dart';
 import '../../ui/widgets/auth_fields.dart';
@@ -48,14 +48,39 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     super.dispose();
   }
 
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
   Future<void> _login() async {
+    // Input validation
+    final email = _email.text.trim();
+    final password = _password.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      _showSnackBar('Please fill all fields');
+      return;
+    }
+
+    if (!email.contains('@')) {
+      _showSnackBar('Enter a valid email address');
+      return;
+    }
+
     setState(() => _loading = true);
     setState(() => _error = null);
 
     try {
       final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _email.text.trim(),
-        password: _password.text.trim(),
+        email: email,
+        password: password,
       );
 
       await cred.user?.reload();
@@ -65,10 +90,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       Navigator.pushReplacementNamed(context, '/home');
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.message ?? 'Login failed');
+      final message = AuthErrorMapper.getMessage(e.code);
+      _showSnackBar(message);
+      // Clear password field on wrong password
+      if (e.code == 'wrong-password') {
+        _password.clear();
+      }
     } catch (_) {
       if (!mounted) return;
-      setState(() => _error = 'Something went wrong');
+      _showSnackBar('Something went wrong. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
