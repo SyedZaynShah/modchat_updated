@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum MessageType { text, image, video, file, audio }
+enum MessageType { text, image, video, file, audio, poll }
 
 extension MessageTypeExt on MessageType {
   String get nameStr => toString().split('.').last;
@@ -20,9 +20,11 @@ class MessageModel {
   final String kind; // user | system
   final String? text;
   final MessageType messageType;
+  final Map<String, dynamic>? poll;
   final String? mediaUrl;
   final String? mediaPath;
   final String? storagePath;
+  final String? bucket;
   final String? localPath;
   final String? cachedPath;
   final String? thumbnailUrl;
@@ -58,9 +60,11 @@ class MessageModel {
     required this.messageType,
     required this.timestamp,
     this.text,
+    this.poll,
     this.mediaUrl,
     this.mediaPath,
     this.storagePath,
+    this.bucket,
     this.localPath,
     this.cachedPath,
     this.thumbnailUrl,
@@ -91,6 +95,7 @@ class MessageModel {
     final url = (data['mediaUrl'] as String?) ?? '';
     final mediaPath = data['mediaPath'] as String?;
     final storagePath = data['storagePath'] as String?;
+    final bucket = data['bucket'] as String?;
     final localPath = data['localPath'] as String?;
     final cachedPath = data['cachedPath'] as String?;
     final thumbnailUrl = data['thumbnailUrl'] as String?;
@@ -104,6 +109,7 @@ class MessageModel {
             .clamp(0.0, 1.0);
     final kind = ((data['type'] as String?) ?? 'user').toLowerCase();
     final meta = (data['meta'] as Map?)?.cast<String, dynamic>();
+    final poll = (data['poll'] as Map?)?.cast<String, dynamic>();
     final replyTo = (data['replyTo'] as Map?)?.cast<String, dynamic>();
     final userReactionsRaw = (data['userReactions'] as Map?)
         ?.cast<String, dynamic>();
@@ -114,6 +120,8 @@ class MessageModel {
     MessageType type;
     if (kind == 'system') {
       type = MessageType.text;
+    } else if (poll != null) {
+      type = MessageType.poll;
     } else if (mediaType != null) {
       switch (mediaType) {
         case 'image':
@@ -139,6 +147,9 @@ class MessageModel {
     } else {
       // legacy path using messageType or infer from url/text
       type = MessageTypeExt.from(legacyMessageType ?? 'text');
+      if (legacyMessageType == 'poll') {
+        type = MessageType.poll;
+      }
       if ((legacyMessageType == null || legacyMessageType == 'text') &&
           (url.isNotEmpty || (text != null && _looksLikeUrl(text)))) {
         final probe = url.isNotEmpty ? url : text!;
@@ -152,6 +163,13 @@ class MessageModel {
               : (storagePath != null && storagePath.isNotEmpty
                     ? storagePath
                     : (text != null && _looksLikeUrl(text) ? text : null)));
+
+    final inferredBucket =
+        bucket ??
+        _inferBucketFromLegacyRefs(
+          mediaPath: mediaPath,
+          effectiveUrl: effectiveUrl,
+        );
     final statusRaw = data['status'];
     final parsedStatus = statusRaw is num ? statusRaw.toInt() : 1;
     return MessageModel(
@@ -162,9 +180,11 @@ class MessageModel {
       kind: kind,
       text: (effectiveUrl != null && type != MessageType.text) ? null : text,
       messageType: type,
+      poll: poll,
       mediaUrl: effectiveUrl,
       mediaPath: mediaPath,
       storagePath: storagePath,
+      bucket: inferredBucket,
       localPath: localPath,
       cachedPath: cachedPath,
       thumbnailUrl: thumbnailUrl,
@@ -218,6 +238,7 @@ class MessageModel {
             .clamp(0.0, 1.0);
     final kind = ((data['type'] as String?) ?? 'user').toLowerCase();
     final meta = (data['meta'] as Map?)?.cast<String, dynamic>();
+    final poll = (data['poll'] as Map?)?.cast<String, dynamic>();
     final replyTo = (data['replyTo'] as Map?)?.cast<String, dynamic>();
     final userReactionsRaw = (data['userReactions'] as Map?)
         ?.cast<String, dynamic>();
@@ -228,6 +249,8 @@ class MessageModel {
     MessageType type;
     if (kind == 'system') {
       type = MessageType.text;
+    } else if (poll != null) {
+      type = MessageType.poll;
     } else if (mediaType != null) {
       switch (mediaType) {
         case 'image':
@@ -252,6 +275,9 @@ class MessageModel {
       }
     } else {
       type = MessageTypeExt.from(legacyMessageType ?? 'text');
+      if (legacyMessageType == 'poll') {
+        type = MessageType.poll;
+      }
       if ((legacyMessageType == null || legacyMessageType == 'text') &&
           (url.isNotEmpty || (text != null && _looksLikeUrl(text)))) {
         final probe = url.isNotEmpty ? url : text!;
@@ -275,6 +301,7 @@ class MessageModel {
       kind: kind,
       text: (effectiveUrl != null && type != MessageType.text) ? null : text,
       messageType: type,
+      poll: poll,
       mediaUrl: effectiveUrl,
       mediaPath: mediaPath,
       storagePath: storagePath,
@@ -401,9 +428,11 @@ class MessageModel {
       'type': kind,
       'text': text,
       'messageType': messageType.nameStr,
+      if (poll != null) 'poll': poll,
       'mediaUrl': mediaUrl,
       'mediaPath': mediaPath,
       'storagePath': storagePath,
+      'bucket': bucket,
       'localPath': localPath,
       'cachedPath': cachedPath,
       'thumbnailUrl': thumbnailUrl,
@@ -417,5 +446,36 @@ class MessageModel {
       'deliveredAt': deliveredAt,
       'status': status,
     };
+  }
+
+  static String? _inferBucketFromLegacyRefs({
+    required String? mediaPath,
+    required String? effectiveUrl,
+  }) {
+    // 1) mediaPath like "bucket/path"
+    final mp = (mediaPath ?? '').trim();
+    if (mp.isNotEmpty) {
+      final i = mp.indexOf('/');
+      if (i > 0) {
+        final b = mp.substring(0, i);
+        if (b.isNotEmpty) return b;
+      }
+    }
+
+    // 2) full supabase public url contains .../object/public/<bucket>/...
+    final u = (effectiveUrl ?? '').trim();
+    if (u.startsWith('http')) {
+      try {
+        final uri = Uri.parse(u);
+        final seg = uri.pathSegments;
+        final idx = seg.indexOf('public');
+        if (idx != -1 && idx + 1 < seg.length) {
+          final b = seg[idx + 1];
+          if (b.isNotEmpty) return b;
+        }
+      } catch (_) {}
+    }
+
+    return null;
   }
 }

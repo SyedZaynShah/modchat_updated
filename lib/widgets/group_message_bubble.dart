@@ -9,6 +9,7 @@ import '../services/storage_service.dart';
 import '../services/supabase_service.dart';
 import '../theme/theme.dart';
 import 'file_preview_widget.dart';
+import 'poll_message_card.dart';
 
 class GroupMessageBubble extends ConsumerWidget {
   final MessageModel message;
@@ -23,6 +24,8 @@ class GroupMessageBubble extends ConsumerWidget {
   final VoidCallback? onReactionsTap;
   final void Function(String messageId)? onOpenThread;
   final ValueChanged<String>? onReplyCardTap;
+  final VoidCallback? onOpenOverride;
+  final String? heroTag;
 
   const GroupMessageBubble({
     super.key,
@@ -35,6 +38,8 @@ class GroupMessageBubble extends ConsumerWidget {
     this.onReactionsTap,
     this.onOpenThread,
     this.onReplyCardTap,
+    this.onOpenOverride,
+    this.heroTag,
     this.isPinned = false,
     this.zoom = 1.0,
     this.bottomSpacing = 6,
@@ -172,7 +177,7 @@ class GroupMessageBubble extends ConsumerWidget {
       return Column(
         crossAxisAlignment: align,
         children: [
-          if (message.replyToMessageId != null)
+          if (!message.isDeletedForAll && message.replyToMessageId != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 4),
               child: Align(
@@ -242,7 +247,8 @@ class GroupMessageBubble extends ConsumerWidget {
                     )
                   else
                     const SizedBox.shrink(),
-                  if (message.replyToMessageId != null)
+                  if (!message.isDeletedForAll &&
+                      message.replyToMessageId != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 4),
                       child: Align(
@@ -352,7 +358,12 @@ class GroupMessageBubble extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             forwardedTag,
-            FilePreviewWidget(message: message, isMe: isMe),
+            FilePreviewWidget(
+              message: message,
+              isMe: isMe,
+              onOpenOverride: onOpenOverride,
+              heroTag: heroTag,
+            ),
           ],
         );
       case MessageType.audio:
@@ -380,6 +391,17 @@ class GroupMessageBubble extends ConsumerWidget {
           children: [
             forwardedTag,
             FilePreviewWidget(message: message, isMe: isMe),
+            const SizedBox(height: 6),
+            _metaRow(textColor, timeText: timeText),
+          ],
+        );
+      case MessageType.poll:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            forwardedTag,
+            PollMessageCard(message: message, isMe: isMe),
             const SizedBox(height: 6),
             _metaRow(textColor, timeText: timeText),
           ],

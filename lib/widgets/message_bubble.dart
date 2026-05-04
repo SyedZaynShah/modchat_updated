@@ -4,6 +4,7 @@ import '../models/message_model.dart';
 import '../providers/user_providers.dart';
 import '../theme/theme.dart';
 import 'file_preview_widget.dart';
+import 'poll_message_card.dart';
 
 class MessageBubble extends StatefulWidget {
   final MessageModel message;
@@ -38,7 +39,9 @@ class _MessageBubbleState extends State<MessageBubble>
     final secondaryText = isDark
         ? AppColors.textDarkSecondary
         : AppColors.textLightSecondary;
-    final timeText = isDark ? AppColors.textDarkSecondary : AppColors.timeTextLight;
+    final timeText = isDark
+        ? AppColors.textDarkSecondary
+        : AppColors.timeTextLight;
     final maxWidth = MediaQuery.of(context).size.width * 0.7;
     final sentColor = isDark
         ? AppColors.primary.withOpacity(0.2)
@@ -46,7 +49,9 @@ class _MessageBubbleState extends State<MessageBubble>
     final receivedColor = isDark
         ? AppColors.darkCard
         : AppColors.incomingBubbleLight;
-    final incomingBorder = isDark ? AppColors.darkBorder : AppColors.bubbleBorderLight;
+    final incomingBorder = isDark
+        ? AppColors.darkBorder
+        : AppColors.bubbleBorderLight;
 
     final bubble = widget.message.messageType == MessageType.text
         ? Container(
@@ -137,11 +142,7 @@ class _MessageBubbleState extends State<MessageBubble>
             forwardedTag,
             Text(
               message.text ?? '',
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.35,
-                color: primaryText,
-              ),
+              style: TextStyle(fontSize: 14, height: 1.35, color: primaryText),
             ),
             const SizedBox(height: 4),
             Row(
@@ -149,10 +150,7 @@ class _MessageBubbleState extends State<MessageBubble>
               children: [
                 Text(
                   _formatTime(),
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: timeText,
-                  ),
+                  style: TextStyle(fontSize: 10, color: timeText),
                 ),
                 if (widget.isMe) ...[
                   const SizedBox(width: 4),
@@ -206,6 +204,15 @@ class _MessageBubbleState extends State<MessageBubble>
             FilePreviewWidget(message: message, isMe: widget.isMe),
           ],
         );
+      case MessageType.poll:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            forwardedTag,
+            PollMessageCard(message: message, isMe: widget.isMe),
+          ],
+        );
     }
   }
 
@@ -235,9 +242,7 @@ class _BubbleAvatar extends ConsumerWidget {
             ? Icon(
                 Icons.person,
                 size: 14,
-                color: Theme.of(
-                  context,
-                ).iconTheme.color?.withOpacity(0.6),
+                color: Theme.of(context).iconTheme.color?.withOpacity(0.6),
               )
             : null,
       ),
@@ -275,4 +280,3 @@ class _StatusIcon extends StatelessWidget {
     return Icon(icon, size: 11, color: color);
   }
 }
-

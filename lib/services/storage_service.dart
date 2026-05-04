@@ -42,10 +42,11 @@ class StorageService {
     );
   }
 
+  /// Actual Supabase bucket names - MUST match exactly
   String get profileBucket =>
-      dotenv.env['SUPABASE_STORAGE_BUCKET_PROFILE'] ?? 'profile_pics';
+      dotenv.env['SUPABASE_STORAGE_BUCKET_PROFILE'] ?? 'profilePictures';
   String get mediaBucket =>
-      dotenv.env['SUPABASE_STORAGE_BUCKET_MEDIA'] ?? 'chat_media';
+      dotenv.env['SUPABASE_STORAGE_BUCKET_MEDIA'] ?? 'chatMedia';
   String get audioBucket =>
-      dotenv.env['SUPABASE_STORAGE_BUCKET_AUDIO'] ?? 'chat_audio';
+      dotenv.env['SUPABASE_STORAGE_BUCKET_AUDIO'] ?? 'dmMedia';
 }

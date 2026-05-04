@@ -38,14 +38,17 @@ class _AudioRecorderWidgetState extends State<AudioRecorderWidget> {
     if (!status.isGranted) return;
     try {
       final dir = await getTemporaryDirectory();
+      // Use m4a (AAC) format for optimal compression and streaming
+      // 64kbps provides good voice quality with small file sizes
       _lastPath =
-          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.wav';
+          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
       _start = DateTime.now();
       await _rec.start(
-        RecordConfig(
-          encoder: AudioEncoder.wav,
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
           sampleRate: 44100,
           numChannels: 1,
+          bitRate: 64000, // 64 kbps - optimal for voice
         ),
         path: _lastPath!,
       );
@@ -117,8 +120,8 @@ class _AudioRecorderWidgetState extends State<AudioRecorderWidget> {
       final bytes = await File(path).readAsBytes();
       await widget.onSendAudio(
         bytes,
-        'voice_${DateTime.now().millisecondsSinceEpoch}.wav',
-        'audio/wav',
+        'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
+        'audio/mp4', // MIME type for m4a/aac
         MessageType.audio,
         durationMs: duration,
       );

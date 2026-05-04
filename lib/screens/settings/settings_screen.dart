@@ -234,11 +234,92 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<void> _pickAndUploadAvatar(String uid) async {
+  final ImagePicker _picker = ImagePicker();
+
+  void _showImageSourcePicker(BuildContext context, String uid) {
+    final theme = Theme.of(context);
+    final isLight = theme.brightness == Brightness.light;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        return Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          decoration: BoxDecoration(
+            color: isLight ? Colors.white : const Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _optionTile(
+                  icon: Icons.photo_library,
+                  label: "Gallery",
+                  isLight: isLight,
+                  onTap: () {
+                    Navigator.pop(context);
+                    _pickImage(ImageSource.gallery, uid);
+                  },
+                ),
+                _optionTile(
+                  icon: Icons.camera_alt,
+                  label: "Camera",
+                  isLight: isLight,
+                  onTap: () {
+                    Navigator.pop(context);
+                    _pickImage(ImageSource.camera, uid);
+                  },
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _optionTile({
+    required IconData icon,
+    required String label,
+    required bool isLight,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Icon(
+        icon,
+        color: isLight ? const Color(0xFF111827) : Colors.white,
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: isLight ? const Color(0xFF111827) : Colors.white,
+        ),
+      ),
+      onTap: onTap,
+    );
+  }
+
+  Future<void> _pickImage(ImageSource source, String uid) async {
     try {
-      final picker = ImagePicker();
-      final XFile? x = await picker.pickImage(source: ImageSource.camera);
-      if (x == null) return;
+      final XFile? file = await _picker.pickImage(
+        source: source,
+        imageQuality: 85, // compression for faster upload
+      );
+      if (file == null) return;
+
+      // Reuse existing upload pipeline
+      await _uploadAvatarFromXFile(file, uid);
+    } catch (e) {
+      debugPrint("Image pick error: $e");
+    }
+  }
+
+  Future<void> _uploadAvatarFromXFile(XFile x, String uid) async {
+    try {
       final data = await x.readAsBytes();
       final path =
           'avatars/${uid}_${DateTime.now().millisecondsSinceEpoch}.png';
@@ -389,7 +470,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               bottom: -2,
                               right: -2,
                               child: InkWell(
-                                onTap: () => _pickAndUploadAvatar(uid),
+                                onTap: () =>
+                                    _showImageSourcePicker(context, uid),
                                 borderRadius: BorderRadius.circular(20),
                                 child: Container(
                                   width: 26,

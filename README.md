@@ -92,24 +92,97 @@ Designed to feel **premium, calm, and professional**.
 
 ---
 
-## 📂 Project Structure (Simplified)
-lib/
-│── auth/
-│ ├── login_screen.dart
-│ ├── signup_screen.dart
-│
-│── chat/
-│ ├── chat_screen.dart
-│ ├── chat_service.dart
-│ ├── chat_providers.dart
-│
-│── ui/
-│ ├── widgets/
-│ ├── theme/
-│
-│── providers/
-│── models/
-│── main.dart
+## How The App Works (High Level)
+
+### App startup and navigation
+- `lib/main.dart` initializes Firebase, Supabase, and theme settings.
+- Auth state changes rebuild the ProviderScope to avoid cross-account cache.
+- `lib/app.dart` wires routes, deep links (group invites), and the AuthGate.
+
+### Core data model (Firestore + Storage)
+- Firestore collections:
+  - `users` (profiles, block lists, hides, preferences)
+  - `dmChats` (DM and group chat metadata)
+  - `dmChats/{chatId}/messages` (message documents)
+  - `dmChats/{chatId}/members` (group membership + roles)
+  - `moderationLogs`, `calls`
+- Supabase buckets:
+  - `profilePictures` (avatars)
+  - `chatMedia` (images, videos, files)
+  - `dmMedia` (voice notes)
+  - `groupImages` (group avatars)
+
+### How messages travel (DM)
+1. UI (`InputField`) calls `ChatService.sendText` / `sendMedia` / `sendPoll`.
+2. `ChatService` writes a message doc in `dmChats/{chatId}/messages`.
+3. Media sends are optimistic: message appears immediately, then upload runs.
+4. Uploads go to Supabase Storage, then Firestore updates `bucket`,
+   `mediaPath`, `storagePath`, `uploadStatus`, and `uploadProgress`.
+5. `messagesProvider` streams updates from Firestore and filters:
+   - membership window
+   - delete-for-me hides
+   - visible-to restrictions
+6. `ChatDetailScreen` groups messages into blocks, renders bubbles,
+   reactions, replies, pins, and unread divider.
+7. Read/delivery sync:
+   - `acknowledgeDelivered` marks delivered
+   - `markAllSeen` marks seen
+   - `updateLastRead` maintains `lastRead` for unread tracking
+
+### Media and voice notes
+- Media URL resolution goes through `MediaResolver` / `MediaUrlResolver`.
+- `FilePreviewWidget` handles media previews, audio playback, and caching.
+- `VoiceNoteService` prewarms players and caches audio with backoff retry.
+- `AudioRecorderWidget` records AAC/m4a, then sends via `ChatService`.
+
+### Groups and moderation (overview)
+- Group chats use the same message collection, but with a `members` subcol.
+- `GroupModerationService` enforces roles, permissions, and approvals.
+- `BlockService` controls DM blocking and user-level protections.
+
+---
+
+## 📂 Project Structure (Key Files)
+
+### Entry and routing
+- `lib/main.dart`: bootstrap Firebase, Supabase, theme, auth-driven scope
+- `lib/app.dart`: routes, deep links, AuthGate, screen wiring
+
+### Models
+- `lib/models/message_model.dart`: message schema + type inference
+- `lib/models/user_model.dart`: user profile schema
+- `lib/models/reply_target.dart`: reply metadata for threaded preview
+
+### Providers (Riverpod)
+- `lib/providers/auth_providers.dart`: auth + Firestore service providers
+- `lib/providers/chat_providers.dart`: message streams, block status, chat list
+- `lib/providers/user_providers.dart`: user document streams
+
+### Services (business logic)
+- `lib/services/chat_service.dart`: send/edit/delete/pin/react/read receipts
+- `lib/services/firestore_service.dart`: Firestore collection access
+- `lib/services/storage_service.dart`: Supabase upload helpers + bucket names
+- `lib/services/supabase_service.dart`: signed URL resolver (legacy/compat)
+- `lib/services/media_resolver.dart`: storage path to public URL
+- `lib/services/media_url_resolver.dart`: strict URL normalization (new)
+- `lib/services/voice_note_service.dart`: audio caching + prewarm
+- `lib/services/typing_controller.dart`: typing/recording presence
+- `lib/services/block_service.dart`: block/unblock logic
+
+### Screens (UI)
+- `lib/screens/chat/chat_detail_screen.dart`: DM message view and actions
+- `lib/screens/chat/group_chat_detail_screen.dart`: group message view
+- `lib/screens/home/home_screen.dart`: entry after auth
+- `lib/screens/auth/*`: login, signup, verification, landing
+- `lib/screens/group/*`: group create, settings, moderation dashboard
+
+### Widgets (UI building blocks)
+- `lib/widgets/input_field.dart`: text/media/poll/voice composer
+- `lib/widgets/file_preview_widget.dart`: image/video/file/audio rendering
+- `lib/widgets/audio_recorder_widget.dart`: voice recording UI
+- `lib/widgets/message_interaction_overlay.dart`: reply/copy/edit actions
+- `lib/widgets/reply_preview_bar.dart`: reply target preview
+- `lib/widgets/swipe_to_reply.dart`: gesture-driven replies
 
 
 ---
@@ -166,8 +239,7 @@ lib/
 - Group chats with roles
 - Admin moderation dashboard
 - End-to-end encryption
-- Message reactions
-- User blocking & reporting
+- Calls and WebRTC full rollout
 
 ---
 

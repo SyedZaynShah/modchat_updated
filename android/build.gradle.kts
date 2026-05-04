@@ -1,7 +1,21 @@
+import org.gradle.api.tasks.compile.JavaCompile
+
 allprojects {
     repositories {
         google()
         mavenCentral()
+    }
+}
+
+subprojects {
+    tasks.withType<JavaCompile>().configureEach {
+        options.compilerArgs.addAll(
+            listOf(
+                "-Xlint:-deprecation",
+                "-Xlint:-unchecked",
+                "-Xlint:-options",
+            )
+        )
     }
 }
 

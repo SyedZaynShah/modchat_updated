@@ -1,4 +1,6 @@
 ﻿import 'package:flutter/material.dart';
+import 'dart:ui';
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:video_player/video_player.dart';
@@ -8,8 +10,137 @@ import '../../models/message_model.dart';
 import '../../widgets/glass_dropdown.dart';
 import '../../services/supabase_service.dart';
 import '../../services/storage_service.dart';
-import 'package:photo_view/photo_view.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+final Map<String, ImageProvider> _viewerProviders = <String, ImageProvider>{};
+final Set<String> _viewerPrecache = <String>{};
+
+ImageProvider _viewerProvider(String url) {
+  return _viewerProviders.putIfAbsent(
+    url,
+    () => CachedNetworkImageProvider(url),
+  );
+}
+
+class _BlurredImage extends StatelessWidget {
+  final ImageProvider provider;
+  final bool blurred;
+  final BoxFit fit;
+  const _BlurredImage({
+    required this.provider,
+    required this.blurred,
+    required this.fit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final image = Image(
+      image: provider,
+      fit: fit,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black54),
+    );
+    if (!blurred) return image;
+    return ImageFiltered(
+      imageFilter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+      child: image,
+    );
+  }
+}
+
+class _ViewerRetryOverlay extends StatelessWidget {
+  final VoidCallback onRetry;
+  const _ViewerRetryOverlay({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.refresh, color: Colors.white70, size: 40),
+          const SizedBox(height: 10),
+          const Text('Tap to retry', style: TextStyle(color: Colors.white70)),
+          const SizedBox(height: 10),
+          ElevatedButton(
+            onPressed: onRetry,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white12,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ViewerImage extends StatefulWidget {
+  final String url;
+  final String heroTag;
+  const _ViewerImage({required this.url, required this.heroTag});
+
+  @override
+  State<_ViewerImage> createState() => _ViewerImageState();
+}
+
+class _ViewerImageState extends State<_ViewerImage> {
+  bool _ready = false;
+  bool _failed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = _viewerProvider(widget.url);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _BlurredImage(provider: provider, blurred: true, fit: BoxFit.contain),
+        AnimatedOpacity(
+          opacity: _ready ? 1 : 0,
+          duration: const Duration(milliseconds: 250),
+          child: Hero(
+            tag: widget.heroTag,
+            child: InteractiveViewer(
+              minScale: 1,
+              maxScale: 4,
+              child: Image(
+                image: provider,
+                fit: BoxFit.contain,
+                width: double.infinity,
+                height: double.infinity,
+                frameBuilder: (context, child, frame, wasSync) {
+                  if (frame != null && !_ready) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _ready = true);
+                    });
+                  }
+                  return child;
+                },
+                errorBuilder: (_, __, ___) {
+                  if (!_failed) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _failed = true);
+                    });
+                  }
+                  return const ColoredBox(color: Colors.black54);
+                },
+              ),
+            ),
+          ),
+        ),
+        if (_failed)
+          _ViewerRetryOverlay(
+            onRetry: () => setState(() {
+              _failed = false;
+              _ready = false;
+            }),
+          ),
+      ],
+    );
+  }
+}
 
 class ChatContactInfoScreen extends ConsumerStatefulWidget {
   static const routeName = '/chat-contact-info';
@@ -71,10 +202,12 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
   }
 
   Future<ImageProvider?> _resolve(String? url) async {
-    if (url == null || url.isEmpty) return null;
-    if (url.startsWith('sb://')) {
-      final s = url.substring(5);
+    final raw = (url ?? '').trim();
+    if (raw.isEmpty) return null;
+    if (raw.startsWith('sb://')) {
+      final s = raw.substring(5);
       final i = s.indexOf('/');
+      if (i <= 0) return null;
       final bucket = s.substring(0, i);
       final path = s.substring(i + 1);
       final signed = await SupabaseService.instance.getSignedUrl(
@@ -84,14 +217,14 @@ class _ChatContactInfoScreenState extends ConsumerState<ChatContactInfoScreen> {
       );
       return NetworkImage(signed);
     }
-    if (!url.contains('://')) {
+    if (!raw.contains('://')) {
       final signed = await SupabaseService.instance.resolveUrl(
         bucket: StorageService().profileBucket,
-        path: url,
+        path: raw,
       );
       return NetworkImage(signed);
     }
-    return NetworkImage(url);
+    return NetworkImage(raw);
   }
 
   @override
@@ -705,9 +838,7 @@ class _IconTab extends StatelessWidget {
               height: 2,
               width: 28,
               decoration: BoxDecoration(
-                color: active
-                    ? theme.colorScheme.primary
-                    : Colors.transparent,
+                color: active ? theme.colorScheme.primary : Colors.transparent,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -747,7 +878,9 @@ class _MediaGrid extends StatelessWidget {
         return ClipRRect(
           borderRadius: BorderRadius.circular(6),
           child: Material(
-            color: isLight ? theme.colorScheme.surface : const Color(0xFF151515),
+            color: isLight
+                ? theme.colorScheme.surface
+                : const Color(0xFF151515),
             child: InkWell(
               onTap: () => onOpen(items, i),
               child: FutureBuilder<String>(
@@ -780,18 +913,16 @@ class _MediaGrid extends StatelessWidget {
                     imageUrl: resolved,
                     fit: BoxFit.cover,
                     fadeInDuration: const Duration(milliseconds: 150),
-                    placeholder: (context, _) =>
-                        ColoredBox(
-                          color: isLight
-                              ? theme.colorScheme.surface
-                              : const Color(0xFF151515),
-                        ),
-                    errorWidget: (context, _, __) =>
-                        ColoredBox(
-                          color: isLight
-                              ? theme.colorScheme.surface
-                              : const Color(0xFF151515),
-                        ),
+                    placeholder: (context, _) => ColoredBox(
+                      color: isLight
+                          ? theme.colorScheme.surface
+                          : const Color(0xFF151515),
+                    ),
+                    errorWidget: (context, _, __) => ColoredBox(
+                      color: isLight
+                          ? theme.colorScheme.surface
+                          : const Color(0xFF151515),
+                    ),
                   );
                 },
               ),
@@ -886,11 +1017,19 @@ class _MediaViewer extends StatefulWidget {
 
 class _MediaViewerState extends State<_MediaViewer> {
   late final PageController _pc;
+  int _currentIndex = 0;
+  bool _showUi = true;
+  double _dragDy = 0;
+  int _retryNonce = 0;
 
   @override
   void initState() {
     super.initState();
     _pc = PageController(initialPage: widget.initialIndex);
+    _currentIndex = widget.initialIndex;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _precacheAround(_currentIndex);
+    });
   }
 
   @override
@@ -899,57 +1038,151 @@ class _MediaViewerState extends State<_MediaViewer> {
     super.dispose();
   }
 
+  void _precacheAround(int index) {
+    for (final i in [index - 1, index, index + 1]) {
+      if (i < 0 || i >= widget.items.length) continue;
+      final m = widget.items[i];
+      if (m.messageType != MessageType.image) continue;
+      final raw = m.mediaUrl ?? '';
+      if (raw.isEmpty) continue;
+      widget
+          .resolveUrl(raw, m.messageType)
+          .then((u) {
+            if (u.isEmpty || !mounted || !_viewerPrecache.add(u)) return;
+            unawaited(
+              precacheImage(_viewerProvider(u), context).catchError((_) {}),
+            );
+          })
+          .catchError((_) {});
+    }
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails d) {
+    setState(() => _dragDy += d.delta.dy);
+  }
+
+  void _onVerticalDragEnd(DragEndDetails d) {
+    final v = d.velocity.pixelsPerSecond.dy.abs();
+    final dy = _dragDy.abs();
+    if (dy > 120 || v > 900) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() => _dragDy = 0);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isLight = theme.brightness == Brightness.light;
     return Scaffold(
-      backgroundColor: isLight
-          ? theme.colorScheme.background
-          : Colors.black,
-      appBar: AppBar(
-        backgroundColor: isLight
-            ? theme.colorScheme.background
-            : Colors.black,
-        iconTheme: IconThemeData(
-          color: isLight ? theme.colorScheme.onBackground : Colors.white,
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.download_rounded),
-            onPressed: () {},
-          ),
-          IconButton(icon: const Icon(Icons.share_outlined), onPressed: () {}),
-        ],
-      ),
-      body: PageView.builder(
-        controller: _pc,
-        itemCount: widget.items.length,
-        itemBuilder: (context, i) {
-          final m = widget.items[i];
-          final raw = m.mediaUrl ?? '';
-          return FutureBuilder<String>(
-            future: widget.resolveUrl(raw, m.messageType),
-            builder: (context, snap) {
-              final resolved = snap.data;
-              if (resolved == null || resolved.isEmpty) {
-                return const Center(
-                  child: Icon(
-                    Icons.broken_image_outlined,
-                    color: Colors.white70,
-                    size: 48,
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: () => setState(() => _showUi = !_showUi),
+        onVerticalDragUpdate: _onVerticalDragUpdate,
+        onVerticalDragEnd: _onVerticalDragEnd,
+        child: Stack(
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              color: Colors.black.withOpacity(
+                (1.0 - (_dragDy.abs() / 280).clamp(0.0, 0.6)),
+              ),
+            ),
+            Transform.translate(
+              offset: Offset(0, _dragDy),
+              child: PageView.builder(
+                controller: _pc,
+                itemCount: widget.items.length,
+                onPageChanged: (i) {
+                  setState(() => _currentIndex = i);
+                  _precacheAround(i);
+                },
+                itemBuilder: (context, i) {
+                  final m = widget.items[i];
+                  final raw = m.mediaUrl ?? '';
+                  final heroTag = raw.isNotEmpty ? raw : 'media_${m.id}';
+                  return FutureBuilder<String>(
+                    key: ValueKey('${m.id}_$_retryNonce'),
+                    future: widget.resolveUrl(raw, m.messageType),
+                    builder: (context, snap) {
+                      final resolved = snap.data ?? '';
+                      if (resolved.isEmpty) {
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            const ColoredBox(color: Colors.black54),
+                            _ViewerRetryOverlay(
+                              onRetry: () => setState(() => _retryNonce++),
+                            ),
+                          ],
+                        );
+                      }
+                      if (m.messageType == MessageType.video) {
+                        return Center(
+                          child: _VideoFullscreenViewer(url: resolved),
+                        );
+                      }
+                      return Center(
+                        child: _ViewerImage(url: resolved, heroTag: heroTag),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedOpacity(
+                opacity: _showUi ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.arrow_back,
+                            color: Colors.white,
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                        Text(
+                          '${_currentIndex + 1} / ${widget.items.length}',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.download,
+                                color: Colors.white,
+                              ),
+                              onPressed: () {},
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.share,
+                                color: Colors.white,
+                              ),
+                              onPressed: () {},
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                );
-              }
-              if (m.messageType == MessageType.video) {
-                return Center(child: _VideoFullscreenViewer(url: resolved));
-              }
-              return PhotoView.customChild(
-                child: Image.network(resolved, fit: BoxFit.contain),
-              );
-            },
-          );
-        },
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1078,9 +1311,7 @@ class _DocumentRow extends StatelessWidget {
             },
             icon: Icon(
               Icons.download_rounded,
-              color: isLight
-                  ? theme.colorScheme.primary
-                  : Colors.white,
+              color: isLight ? theme.colorScheme.primary : Colors.white,
             ),
           ),
         ],
@@ -1170,9 +1401,7 @@ class _VoiceCard extends StatelessWidget {
         color: isLight ? theme.colorScheme.surface : const Color(0xFF111111),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: isLight
-              ? Colors.black.withOpacity(0.05)
-              : Colors.transparent,
+          color: isLight ? Colors.black.withOpacity(0.05) : Colors.transparent,
         ),
       ),
       child: Row(
@@ -1361,5 +1590,3 @@ class _TabSkeleton extends StatelessWidget {
     );
   }
 }
-
-

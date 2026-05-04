@@ -156,6 +156,7 @@ service cloud.firestore {
         allow update: if isParentMember() && (
           (request.auth.uid == resource.data.senderId && senderImmutableOk())
           || changedKeysOnly([
+              'poll',
               'reactions',
               'userReactions',
               'status',
@@ -199,3 +200,4 @@ service cloud.firestore {
     }
   }
 }
+ 

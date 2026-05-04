@@ -1,11 +1,13 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/message_model.dart';
+import 'storage_service.dart';
 import 'firestore_service.dart';
 
 class ChatService {
@@ -401,9 +403,11 @@ class ChatService {
   }
 
   String getBucket({required bool isGroup, required String type}) {
-    if (type == 'profile') return 'profilePictures';
+    final storage = StorageService();
+    if (type == 'profile') return storage.profileBucket;
     if (type == 'groupImage') return 'groupImages';
-    return 'chatMedia';
+    if (type == 'audio') return storage.audioBucket;
+    return storage.mediaBucket;
   }
 
   /// Gets a stable public URL for a Supabase storage path.
@@ -426,14 +430,24 @@ class ChatService {
     required String senderId,
     required String fileName,
     String? messageId,
+    String? mediaType,
   }) {
     final sanitizedName = sanitizeFileName(fileName);
-    print('FILE NAME CLEANED: $sanitizedName');
-    final unique =
-        messageId ?? DateTime.now().millisecondsSinceEpoch.toString();
-    final path = '$chatId/${unique}_${senderId}_$sanitizedName';
-    print('UPLOAD PATH: $path');
-    return path;
+    final ext = _extOf(sanitizedName);
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final rand = Random().nextInt(9999);
+
+    // Voice notes: dmMedia/{userId}/{chatId}/voice_<timestamp>.webm
+    if (mediaType == 'audio' || ext == 'webm' || ext == 'wav') {
+      final leaf = ext.isNotEmpty
+          ? 'voice_${ts}_$rand.$ext'
+          : 'voice_${ts}_$rand';
+      return '$senderId/$chatId/$leaf';
+    }
+
+    // Images/Videos/Files: chatMedia/{chatId}/{timestamp}_{rand}.{ext}
+    final leaf = ext.isNotEmpty ? '${ts}_$rand.$ext' : '${ts}_$rand';
+    return '$chatId/$leaf';
   }
 
   Future<void> _markUploadFailed(
@@ -671,6 +685,66 @@ class ChatService {
     });
   }
 
+  Future<void> sendPoll({
+    required String chatId,
+    required String peerId,
+    required Map<String, dynamic> poll,
+    Map<String, dynamic>? replyTo,
+  }) async {
+    if (!await _ensureMemberOrLog(chatId)) return;
+    final uid = _auth.currentUser!.uid;
+    final doc = _fs.messages(chatId).doc();
+    final now = FieldValue.serverTimestamp();
+
+    final normalizedPoll = Map<String, dynamic>.from(poll);
+    normalizedPoll['createdBy'] = uid;
+    normalizedPoll['createdAt'] = now;
+    normalizedPoll['isAnonymous'] =
+        (normalizedPoll['isAnonymous'] as bool?) ?? false;
+    normalizedPoll['totalVotes'] =
+        (normalizedPoll['totalVotes'] as num?)?.toInt() ?? 0;
+
+    final optionsRaw = (normalizedPoll['options'] as List?) ?? const [];
+    normalizedPoll['options'] = optionsRaw
+        .whereType<Map>()
+        .map((m) {
+          final o = Map<String, dynamic>.from(m);
+          final votes = (o['votes'] as List?)?.length ?? 0;
+          o['voteCount'] = (o['voteCount'] as num?)?.toInt() ?? votes;
+          return o;
+        })
+        .toList(growable: false);
+
+    final payload = <String, dynamic>{
+      'chatId': chatId,
+      'senderId': uid,
+      'receiverId': peerId,
+      'type': 'poll',
+      'messageType': 'poll',
+      'poll': normalizedPoll,
+      if (replyTo != null) 'replyTo': replyTo,
+      'createdAt': now,
+      'timestamp': now,
+      'isSeen': false,
+      'status': 1,
+      'members': [uid, peerId],
+      'visibleTo': [uid, peerId],
+      'deletedFor': <String>[],
+      'edited': false,
+      'isDeletedForAll': false,
+    };
+    _validateOutboundMessagePayload(payload);
+    _logMessageWrite(payload);
+    await doc.set(payload);
+
+    await _fs.dmChats.doc(chatId).update({
+      'lastMessage': 'Poll',
+      'lastMessageType': 'poll',
+      'lastTimestamp': now,
+      'lastActivityAt': now,
+    });
+  }
+
   Future<void> sendMedia({
     required String chatId,
     required String peerId,
@@ -681,6 +755,9 @@ class ChatService {
     String? localPath,
     String? thumbnailPath,
     int? audioDurationMs,
+    String? caption,
+    bool? viewOnce,
+    Map<String, dynamic>? meta,
     Map<String, dynamic>? replyTo,
   }) async {
     if (!await _ensureMemberOrLog(chatId)) return;
@@ -694,6 +771,7 @@ class ChatService {
       senderId: uid,
       fileName: fileName,
       messageId: msgRef.id,
+      mediaType: mediaType,
     );
     final mediaPath = '$bucket/$path';
     final now = FieldValue.serverTimestamp();
@@ -703,6 +781,7 @@ class ChatService {
       'chatId': chatId,
       'senderId': uid,
       'receiverId': peerId,
+      'bucket': bucket,
       'mediaPath': mediaPath,
       'storagePath': path,
       'type': type.name,
@@ -714,6 +793,9 @@ class ChatService {
       'mediaSize': bytes.length,
       if (type == MessageType.audio && audioDurationMs != null)
         'audioDurationMs': audioDurationMs,
+      if (caption != null && caption.isNotEmpty) 'text': caption,
+      if (viewOnce != null) 'viewOnce': viewOnce,
+      if (meta != null && meta.isNotEmpty) 'meta': meta,
       if (replyTo != null) 'replyTo': replyTo,
       'createdAt': now,
       'timestamp': now,
@@ -764,19 +846,16 @@ class ChatService {
       );
 
       // Generate stable public URL after successful upload
-      final publicUrl = getPublicUrl(bucket, path);
-
       await msgRef.set({
+        'bucket': bucket,
         'mediaPath': mediaPath,
         'storagePath': path,
-        if (publicUrl != null) 'mediaUrl': publicUrl,
         'status': 1,
         'uploadStatus': 'done',
         'uploadProgress': 1.0,
         if (localPath != null && localPath.isNotEmpty) 'cachedPath': localPath,
       }, SetOptions(merge: true));
       print('MEDIA URL: $mediaPath');
-      print('PUBLIC URL: $publicUrl');
     }
 
     try {
@@ -841,6 +920,58 @@ class ChatService {
     });
   }
 
+  Future<void> sendGroupPoll({
+    required String chatId,
+    required List<String> memberIds,
+    required Map<String, dynamic> poll,
+    Map<String, dynamic>? replyTo,
+  }) async {
+    if (!await _ensureMemberOrLog(chatId)) return;
+    final uid = _auth.currentUser!.uid;
+    final members = {...memberIds, uid}.toList()..sort();
+    final doc = _fs.messages(chatId).doc();
+    final now = FieldValue.serverTimestamp();
+
+    final normalizedPoll = Map<String, dynamic>.from(poll);
+    normalizedPoll['createdBy'] = uid;
+    normalizedPoll['createdAt'] = now;
+    normalizedPoll['totalVotes'] =
+        (normalizedPoll['totalVotes'] as num?)?.toInt() ?? 0;
+
+    final payload = <String, dynamic>{
+      'chatId': chatId,
+      'senderId': uid,
+      'receiverId': '',
+      'type': 'poll',
+      'messageType': 'poll',
+      'poll': normalizedPoll,
+      if (replyTo != null) 'replyTo': replyTo,
+      'createdAt': now,
+      'timestamp': now,
+      'isSeen': false,
+      'status': 1,
+      'members': members,
+      'visibleTo': members,
+      'deletedFor': <String>[],
+      'edited': false,
+      'isDeletedForAll': false,
+    };
+    _validateOutboundMessagePayload(payload);
+    _logMessageWrite(payload);
+    await doc.set(payload);
+
+    await _fs.dmChats.doc(chatId).update({
+      'lastMessage': 'Poll',
+      'lastMessageType': 'poll',
+      'lastTimestamp': now,
+      'lastActivityAt': now,
+      'memberCount': members.length,
+    });
+    await _fs.dmChats.doc(chatId).collection('members').doc(uid).update({
+      'lastSentAt': now,
+    });
+  }
+
   Future<void> sendGroupMedia({
     required String chatId,
     required List<String> memberIds,
@@ -851,6 +982,9 @@ class ChatService {
     String? localPath,
     String? thumbnailPath,
     int? audioDurationMs,
+    String? caption,
+    bool? viewOnce,
+    Map<String, dynamic>? meta,
     Map<String, dynamic>? replyTo,
   }) async {
     if (!await _ensureMemberOrLog(chatId)) return;
@@ -865,6 +999,7 @@ class ChatService {
       senderId: uid,
       fileName: fileName,
       messageId: msgRef.id,
+      mediaType: mediaType,
     );
     final mediaPath = '$bucket/$path';
     final now = FieldValue.serverTimestamp();
@@ -874,6 +1009,7 @@ class ChatService {
       'chatId': chatId,
       'senderId': uid,
       'receiverId': '',
+      'bucket': bucket,
       'mediaPath': mediaPath,
       'storagePath': path,
       'type': type.name,
@@ -885,6 +1021,9 @@ class ChatService {
       'mediaSize': bytes.length,
       if (type == MessageType.audio && audioDurationMs != null)
         'audioDurationMs': audioDurationMs,
+      if (caption != null && caption.isNotEmpty) 'text': caption,
+      if (viewOnce != null) 'viewOnce': viewOnce,
+      if (meta != null && meta.isNotEmpty) 'meta': meta,
       if (replyTo != null) 'replyTo': replyTo,
       'createdAt': now,
       'timestamp': now,
@@ -939,20 +1078,16 @@ class ChatService {
         },
       );
 
-      // Generate stable public URL after successful upload
-      final publicUrl = getPublicUrl(bucket, path);
-
       await msgRef.set({
+        'bucket': bucket,
         'mediaPath': mediaPath,
         'storagePath': path,
-        if (publicUrl != null) 'mediaUrl': publicUrl,
         'status': 1,
         'uploadStatus': 'done',
         'uploadProgress': 1.0,
         if (localPath != null && localPath.isNotEmpty) 'cachedPath': localPath,
       }, SetOptions(merge: true));
       print('MEDIA URL: $mediaPath');
-      print('PUBLIC URL: $publicUrl');
     }
 
     try {
@@ -1007,6 +1142,7 @@ class ChatService {
       senderId: uid,
       fileName: retryFileName,
       messageId: null,
+      mediaType: mediaType,
     );
     final mediaPath = '$bucket/$path';
 
@@ -1015,6 +1151,7 @@ class ChatService {
       'status': 1,
       'uploadStatus': 'uploading',
       'uploadProgress': 0.0,
+      'bucket': bucket,
       'mediaPath': mediaPath,
       'storagePath': path,
     }, SetOptions(merge: true));
@@ -1036,12 +1173,10 @@ class ChatService {
       );
 
       // Generate stable public URL after successful upload
-      final publicUrl = getPublicUrl(bucket, path);
-
       await msgRef.set({
+        'bucket': bucket,
         'mediaPath': mediaPath,
         'storagePath': path,
-        if (publicUrl != null) 'mediaUrl': publicUrl,
         'status': 1,
         'uploadStatus': 'done',
         'uploadProgress': 1.0,
@@ -1211,6 +1346,11 @@ class ChatService {
       'mediaUrl': null,
       'mediaType': null,
       'deletedAt': FieldValue.serverTimestamp(),
+      // Clear reply metadata so the reply UI disappears
+      'replyToMessageId': null,
+      'replyToSenderId': null,
+      'replyToText': null,
+      'replyToMessageType': null,
     });
 
     try {

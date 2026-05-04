@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/message_model.dart';
+import '../services/media_resolver.dart';
 import '../theme/theme.dart';
 
 class MinimalAsyncMedia extends StatefulWidget {
@@ -20,21 +21,46 @@ class MinimalAsyncMedia extends StatefulWidget {
 class _MinimalAsyncMediaState extends State<MinimalAsyncMedia> {
   String? _resolvedUrl;
   bool _isLoading = true;
+  Timer? _timeoutTimer;
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   void initState() {
     super.initState();
     // Start async loading after UI is built
     Future.delayed(const Duration(milliseconds: 100), () {
-      _loadMedia();
+      _startLoadWithTimeout();
+    });
+  }
+
+  void _startLoadWithTimeout() {
+    _loadMedia();
+    _timeoutTimer?.cancel();
+    _timeoutTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted && _isLoading) {
+        setState(() {
+          _isLoading = false;
+          _resolvedUrl = null;
+        });
+      }
     });
   }
 
   Future<void> _loadMedia() async {
     if (!mounted) return;
 
-    final rawUrl = widget.message.mediaUrl ?? '';
-    if (rawUrl.isEmpty) {
+    // Use storagePath + bucket for reliable resolution
+    final rawPath = (widget.message.storagePath?.isNotEmpty == true)
+        ? widget.message.storagePath!
+        : (widget.message.mediaPath?.isNotEmpty == true)
+        ? widget.message.mediaPath!
+        : (widget.message.mediaUrl ?? '');
+    if (rawPath.isEmpty) {
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -43,24 +69,32 @@ class _MinimalAsyncMediaState extends State<MinimalAsyncMedia> {
       return;
     }
 
+    if (widget.message.uploadStatus == 'uploading') {
+      if (mounted) {
+        setState(() {
+          _isLoading = true;
+          _resolvedUrl = null;
+        });
+      }
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
-      String resolved = rawUrl;
-      if (!(rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))) {
-        var path = rawUrl;
-        if (rawUrl.startsWith('sb://')) {
-          final s = rawUrl.substring(5);
-          final i = s.indexOf('/');
-          if (i > 0) {
-            path = s.substring(i + 1);
-          }
-        } else if (rawUrl.startsWith('chatMedia/')) {
-          path = rawUrl.substring('chatMedia/'.length);
+      final resolved = MediaResolver.resolve(
+        rawPath,
+        bucket: widget.message.bucket,
+      );
+      if (resolved == null || resolved.isEmpty) {
+        MediaResolver.logOnceFailure(rawPath);
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _resolvedUrl = null;
+          });
         }
-        resolved = await Supabase.instance.client.storage
-            .from('chatMedia')
-            .createSignedUrl(path, 3600);
+        return;
       }
 
       if (mounted) {
@@ -73,7 +107,7 @@ class _MinimalAsyncMediaState extends State<MinimalAsyncMedia> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _resolvedUrl = rawUrl; // fallback
+          _resolvedUrl = null; // fail fast, no bad fallback
         });
       }
     }
@@ -126,6 +160,9 @@ class _MinimalAsyncMediaState extends State<MinimalAsyncMedia> {
     switch (widget.message.messageType) {
       case MessageType.text:
         return const SizedBox.shrink(); // Text handled elsewhere
+
+      case MessageType.poll:
+        return const SizedBox.shrink();
 
       case MessageType.image:
         return ClipRRect(

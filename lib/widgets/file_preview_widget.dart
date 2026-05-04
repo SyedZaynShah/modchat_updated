@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:async';
+import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -7,40 +9,28 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 import 'package:pdfx/pdfx.dart';
-import 'package:photo_view/photo_view.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:math' as math;
 import '../models/message_model.dart';
 import '../providers/chat_providers.dart';
+import '../services/media_resolver.dart';
+import '../services/voice_note_service.dart';
 import '../theme/theme.dart';
 
-Future<String> _resolveMediaUrl(String raw, MessageType type) {
-  if (raw.isEmpty) {
-    return Future.error(StateError('Empty media url'));
+String? _resolveMediaUrlOrNull(String raw, {String? bucket}) {
+  final url = MediaResolver.resolve(raw, bucket: bucket);
+  if (url == null || url.isEmpty) {
+    MediaResolver.logOnceFailure(raw);
+    return null;
   }
-  if (raw.startsWith('http://') || raw.startsWith('https://')) {
-    return Future.value(raw);
-  }
-
-  String path = raw;
-  if (raw.startsWith('sb://')) {
-    final sbPath = raw.substring(5);
-    final slash = sbPath.indexOf('/');
-    if (slash > 0) {
-      path = sbPath.substring(slash + 1);
-    }
-  } else if (raw.startsWith('chatMedia/')) {
-    path = raw.substring('chatMedia/'.length);
-  }
-
-  return Supabase.instance.client.storage.from('chatMedia').createSignedUrl(
-    path,
-    3600,
-  );
+  return url;
 }
+
+final Set<String> _precacheRequested = <String>{};
+final Map<String, ImageProvider> _sharedNetworkProviders =
+    <String, ImageProvider>{};
 
 String? _bestExistingLocalPath(MessageModel message) {
   final cached = message.cachedPath;
@@ -52,6 +42,69 @@ String? _bestExistingLocalPath(MessageModel message) {
     return local;
   }
   return null;
+}
+
+ImageProvider? _mediaPlaceholderProvider({
+  required String? localPath,
+  required String? thumbUrl,
+}) {
+  if (localPath != null && localPath.isNotEmpty) {
+    final f = File(localPath);
+    if (f.existsSync()) return FileImage(f);
+  }
+  if (thumbUrl != null && thumbUrl.isNotEmpty) {
+    if (thumbUrl.startsWith('http://') || thumbUrl.startsWith('https://')) {
+      return _sharedNetworkProvider(thumbUrl);
+    }
+    final f = File(thumbUrl);
+    if (f.existsSync()) return FileImage(f);
+  }
+  return null;
+}
+
+ImageProvider _sharedNetworkProvider(String url) {
+  return _sharedNetworkProviders.putIfAbsent(
+    url,
+    () => CachedNetworkImageProvider(url),
+  );
+}
+
+Size _mediaBoxSize({
+  required double maxW,
+  required double maxH,
+  required double minSize,
+  required double aspectRatio,
+}) {
+  final ar = aspectRatio <= 0 ? 1.0 : aspectRatio;
+  double width = maxW;
+  double height = width / ar;
+
+  if (height > maxH) {
+    height = maxH;
+    width = height * ar;
+  }
+
+  if (width < minSize) {
+    width = minSize;
+    height = width / ar;
+  }
+
+  if (height < minSize) {
+    height = minSize;
+    width = height * ar;
+  }
+
+  if (width > maxW) {
+    width = maxW;
+    height = width / ar;
+  }
+
+  if (height > maxH) {
+    height = maxH;
+    width = height * ar;
+  }
+
+  return Size(width, height);
 }
 
 class _UploadStatusOverlay extends StatelessWidget {
@@ -66,66 +119,9 @@ class _UploadStatusOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (status == 'failed') {
-      return Positioned(
-        right: 8,
-        top: 8,
-        child: InkWell(
-          onTap: onRetry,
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            width: 28,
-            height: 28,
-            decoration: const BoxDecoration(
-              color: Colors.black54,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.refresh_rounded, size: 16, color: Colors.white),
-          ),
-        ),
-      );
-    }
-    if (status != 'uploading') {
-      return const SizedBox.shrink();
-    }
-    final pct = (progress.clamp(0.0, 1.0) * 100).round();
-    return Positioned(
-      right: 8,
-      top: 8,
-      child: Container(
-        width: 34,
-        height: 34,
-        decoration: const BoxDecoration(
-          color: Colors.black54,
-          shape: BoxShape.circle,
-        ),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(5),
-              child: CircularProgressIndicator(
-                value: progress.clamp(0.0, 1.0),
-                strokeWidth: 2,
-                valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-                backgroundColor: Colors.white24,
-              ),
-            ),
-            Center(
-              child: Text(
-                '$pct',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 9,
-                  fontWeight: FontWeight.w700,
-                  height: 1,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    if (status != 'failed') return const SizedBox.shrink();
+    // No retry UI (WhatsApp-like): keep showing placeholder.
+    return const SizedBox.shrink();
   }
 }
 
@@ -133,12 +129,11 @@ class _AudioPendingInline extends StatelessWidget {
   final bool isMe;
   final String status; // uploading | failed
   final double progress;
-  final RetryUpload? onRetry;
   const _AudioPendingInline({
+    super.key,
     required this.isMe,
     required this.status,
     required this.progress,
-    this.onRetry,
   });
 
   @override
@@ -178,7 +173,9 @@ class _AudioPendingInline extends StatelessWidget {
             child: Align(
               alignment: Alignment.centerLeft,
               child: FractionallySizedBox(
-                widthFactor: status == 'failed' ? 1.0 : progress.clamp(0.0, 1.0),
+                widthFactor: status == 'failed'
+                    ? 1.0
+                    : progress.clamp(0.0, 1.0),
                 child: Container(
                   height: 6,
                   decoration: BoxDecoration(
@@ -200,13 +197,6 @@ class _AudioPendingInline extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
-          if (status == 'failed' && onRetry != null) ...[
-            const SizedBox(width: 8),
-            InkWell(
-              onTap: onRetry,
-              child: const Icon(Icons.refresh_rounded, size: 18, color: Colors.white),
-            ),
-          ],
         ],
       ),
     );
@@ -216,15 +206,24 @@ class _AudioPendingInline extends StatelessWidget {
 class FilePreviewWidget extends StatelessWidget {
   final MessageModel message;
   final bool isMe;
+  final VoidCallback? onOpenOverride;
+  final String? heroTag;
   const FilePreviewWidget({
     super.key,
     required this.message,
     required this.isMe,
+    this.onOpenOverride,
+    this.heroTag,
   });
 
   @override
   Widget build(BuildContext context) {
-    return _FilePreviewContent(message: message, isMe: isMe);
+    return _FilePreviewContent(
+      message: message,
+      isMe: isMe,
+      onOpenOverride: onOpenOverride,
+      heroTag: heroTag,
+    );
   }
 }
 
@@ -233,9 +232,13 @@ typedef RetryUpload = Future<void> Function();
 class _FilePreviewContent extends ConsumerWidget {
   final MessageModel message;
   final bool isMe;
+  final VoidCallback? onOpenOverride;
+  final String? heroTag;
   const _FilePreviewContent({
     required this.message,
     required this.isMe,
+    this.onOpenOverride,
+    this.heroTag,
   });
 
   Future<void> _retryUpload(BuildContext context, WidgetRef ref) async {
@@ -251,21 +254,46 @@ class _FilePreviewContent extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final retry = () => _retryUpload(context, ref);
+    Future<void> retry() => _retryUpload(context, ref);
+    final rawUrl =
+        (message.storagePath != null && message.storagePath!.isNotEmpty)
+        ? message.storagePath
+        : message.mediaUrl;
+    if (message.messageType == MessageType.image &&
+        rawUrl != null &&
+        rawUrl.isNotEmpty &&
+        _precacheRequested.add(rawUrl)) {
+      final resolvedUrl = _resolveMediaUrlOrNull(
+        rawUrl,
+        bucket: message.bucket,
+      );
+      if (resolvedUrl != null && context.mounted) {
+        final provider = _sharedNetworkProvider(resolvedUrl);
+        unawaited(precacheImage(provider, context).catchError((_) {}));
+      }
+    }
     switch (message.messageType) {
       case MessageType.image:
-        return _ImagePreview(message: message, isMe: isMe, onRetry: retry);
+        return _ImagePreview(
+          message: message,
+          isMe: isMe,
+          onRetry: retry,
+          onOpenOverride: onOpenOverride,
+          heroTag: heroTag,
+        );
       case MessageType.video:
-        return _VideoPreview(message: message, isMe: isMe, onRetry: retry);
+        return _VideoPreview(
+          message: message,
+          isMe: isMe,
+          onRetry: retry,
+          onOpenOverride: onOpenOverride,
+          heroTag: heroTag,
+        );
       case MessageType.audio:
         return _AudioInline(message: message, isMe: isMe, onRetry: retry);
       case MessageType.file:
       default:
-        return _FileTile(
-          message: message,
-          isMe: isMe,
-          onRetry: retry,
-        );
+        return _FileTile(message: message, isMe: isMe, onRetry: retry);
     }
   }
 }
@@ -274,10 +302,14 @@ class _ImagePreview extends StatefulWidget {
   final MessageModel message;
   final bool isMe;
   final RetryUpload onRetry;
+  final VoidCallback? onOpenOverride;
+  final String? heroTag;
   const _ImagePreview({
     required this.message,
     required this.isMe,
     required this.onRetry,
+    this.onOpenOverride,
+    this.heroTag,
   });
   @override
   State<_ImagePreview> createState() => _ImagePreviewState();
@@ -287,13 +319,19 @@ class _ImagePreviewState extends State<_ImagePreview> {
   String? _resolved;
   double? _aspectRatio;
   bool _ready = false;
-
-  static const Duration _resolveTimeout = Duration(seconds: 6);
-  static const Duration _probeTimeout = Duration(seconds: 8);
+  bool _failed = false;
+  bool _loaded = false;
+  Timer? _failFastTimer;
 
   @override
   void initState() {
     super.initState();
+    _failFastTimer?.cancel();
+    _failFastTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted && !_loaded) {
+        setState(() => _failed = true);
+      }
+    });
     _init();
   }
 
@@ -309,9 +347,23 @@ class _ImagePreviewState extends State<_ImagePreview> {
         _resolved = null;
         _aspectRatio = null;
         _ready = false;
+        _failed = false;
+        _loaded = false;
+      });
+      _failFastTimer?.cancel();
+      _failFastTimer = Timer(const Duration(seconds: 8), () {
+        if (mounted && !_loaded) {
+          setState(() => _failed = true);
+        }
       });
       _init();
     }
+  }
+
+  @override
+  void dispose() {
+    _failFastTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _init() async {
@@ -325,7 +377,9 @@ class _ImagePreviewState extends State<_ImagePreview> {
       return;
     }
 
-    final v = widget.message.mediaUrl ?? '';
+    final v = (widget.message.storagePath ?? '').isNotEmpty
+        ? (widget.message.storagePath ?? '')
+        : (widget.message.mediaUrl ?? '');
     if (v.isEmpty) {
       if (!mounted) return;
       setState(() {
@@ -336,60 +390,30 @@ class _ImagePreviewState extends State<_ImagePreview> {
       return;
     }
     String? resolved;
-    try {
-      resolved = await _resolveMediaUrl(
-        v,
-        widget.message.messageType,
-      ).timeout(_resolveTimeout);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _resolved = null;
-        _aspectRatio = null;
-        _ready = true;
-      });
-      return;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      resolved = _resolveMediaUrlOrNull(v, bucket: widget.message.bucket);
+      if (resolved != null && resolved.isNotEmpty) break;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
     }
 
     if (!mounted) return;
     setState(() {
-      _resolved = resolved;
       _ready = true;
+      _resolved = resolved;
+      _loaded = resolved != null && resolved.isNotEmpty;
+      _failed = !_loaded;
     });
-
-    // Probe dimensions asynchronously to refine aspect ratio without blocking paint.
-    final img = Image.network(resolved);
-    final c = Completer<ImageInfo>();
-    final stream = img.image.resolve(const ImageConfiguration());
-    late final ImageStreamListener l;
-    l = ImageStreamListener(
-      (info, _) {
-        if (!c.isCompleted) c.complete(info);
-      },
-      onError: (e, st) {
-        if (!c.isCompleted) c.completeError(e, st);
-      },
-    );
-    stream.addListener(l);
-    try {
-      final info = await c.future.timeout(_probeTimeout);
-      final w = info.image.width.toDouble();
-      final h = info.image.height.toDouble();
-      if (!mounted) return;
-      final ar = (h == 0) ? null : (w / h);
-      if (ar != null && ar > 0) {
-        setState(() => _aspectRatio = ar);
-      }
-    } catch (_) {
-      // ignore
-    } finally {
-      stream.removeListener(l);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     final local = _bestExistingLocalPath(widget.message);
+
+    final placeholderProvider = _mediaPlaceholderProvider(
+      localPath: local,
+      thumbUrl: widget.message.thumbnailUrl,
+    );
+    final fallback = AppColors.highlight.withOpacity(0.65);
 
     final maxW = MediaQuery.of(context).size.width * 0.65;
     const minSize = 140.0;
@@ -399,7 +423,14 @@ class _ImagePreviewState extends State<_ImagePreview> {
         ? 1.0
         : _aspectRatio!.clamp(0.6, 1.4);
 
-    if (!_ready) {
+    final boxSize = _mediaBoxSize(
+      maxW: maxW,
+      maxH: maxH,
+      minSize: minSize,
+      aspectRatio: ar,
+    );
+
+    if (_failed && local == null) {
       return ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: maxW,
@@ -407,151 +438,219 @@ class _ImagePreviewState extends State<_ImagePreview> {
           minWidth: minSize,
           minHeight: minSize,
         ),
-        child: const ClipRRect(
-          borderRadius: BorderRadius.all(Radius.circular(14)),
-          child: _ShimmerBox(radius: 14),
+        child: SizedBox(
+          width: boxSize.width,
+          height: boxSize.height,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: _BlurredPlaceholder(
+              image: placeholderProvider,
+              blurred: true,
+              fallback: fallback,
+            ),
+          ),
         ),
       );
+    }
+
+    if (!_ready) {
+      final loadingChild = placeholderProvider != null
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                _BlurredPlaceholder(
+                  image: placeholderProvider,
+                  blurred: true,
+                  fallback: fallback,
+                ),
+                const Opacity(opacity: 0.22, child: _ShimmerBox(radius: 14)),
+              ],
+            )
+          : const _ShimmerBox(radius: 14);
+
+      return ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxW,
+          maxHeight: maxH,
+          minWidth: minSize,
+          minHeight: minSize,
+        ),
+        child: SizedBox(
+          width: boxSize.width,
+          height: boxSize.height,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: loadingChild,
+          ),
+        ),
+      );
+    }
+
+    ImageProvider? actualProvider;
+    String? actualKey;
+    if (local != null && local.isNotEmpty) {
+      actualProvider = FileImage(File(local));
+      actualKey = 'local_${widget.message.id}';
+    } else if (_resolved != null) {
+      actualProvider = _sharedNetworkProvider(_resolved!);
+      actualKey = 'network_${widget.message.id}';
     }
 
     if (_resolved == null) {
-      return ConstrainedBox(
+      final unresolvedPreview = ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: maxW,
           maxHeight: maxH,
           minWidth: minSize,
           minHeight: minSize,
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: AspectRatio(
-            aspectRatio: 1,
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
-              child: (local != null && local.isNotEmpty)
-                  ? Stack(
-                      key: ValueKey('local_${widget.message.id}'),
-                      fit: StackFit.expand,
-                      children: [
-                        Image(
-                          image: FileImage(File(local)),
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          errorBuilder: (_, __, ___) => const _MediaErrorBox(
-                            icon: Icons.broken_image_outlined,
-                          ),
-                        ),
-                        _UploadStatusOverlay(
-                          status: widget.message.uploadStatus,
-                          progress: widget.message.uploadProgress,
-                          onRetry: widget.onRetry,
-                        ),
-                      ],
-                    )
-                  : const _MediaErrorBox(icon: Icons.broken_image_outlined),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => Scaffold(
-              backgroundColor: Colors.black,
-              appBar: AppBar(
-                actions: [
-                  IconButton(
-                    icon: const Icon(Icons.download_rounded),
-                    onPressed: () async {
-                      await launchUrl(
-                        Uri.parse(_resolved!),
-                        mode: LaunchMode.externalApplication,
-                      );
-                    },
-                  ),
-                ],
-              ),
-              body: PhotoView.customChild(
-                child: Image.network(
-                  _resolved!,
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) {
-                    return const Center(
-                      child: Icon(
-                        Icons.broken_image_outlined,
-                        color: Colors.white70,
-                        size: 48,
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: maxW,
-          maxHeight: maxH,
-          minWidth: minSize,
-          minHeight: minSize,
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: AspectRatio(
-            aspectRatio: ar,
+        child: SizedBox(
+          width: boxSize.width,
+          height: boxSize.height,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
             child: Stack(
               fit: StackFit.expand,
               children: [
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: (local != null && local.isNotEmpty)
-                      ? Image(
-                          key: ValueKey('local_${widget.message.id}'),
-                          image: FileImage(File(local)),
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          errorBuilder: (_, __, ___) => const _MediaErrorBox(
-                            icon: Icons.broken_image_outlined,
-                          ),
-                        )
-                      : Image(
-                          key: ValueKey('network_${widget.message.id}'),
-                          image: CachedNetworkImageProvider(_resolved!),
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          errorBuilder: (_, __, ___) => const _MediaErrorBox(
-                            icon: Icons.broken_image_outlined,
-                          ),
-                        ),
+                _BlurredPlaceholder(
+                  image: placeholderProvider,
+                  blurred: true,
+                  fallback: fallback,
                 ),
+                if (actualProvider != null)
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    transitionBuilder: (child, anim) =>
+                        FadeTransition(opacity: anim, child: child),
+                    child: Image(
+                      key: ValueKey(actualKey),
+                      image: actualProvider,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: double.infinity,
+                      errorBuilder: (_, __, ___) => _MediaErrorFallback(
+                        placeholder: placeholderProvider,
+                        onRetry: widget.onRetry,
+                        fallback: fallback,
+                      ),
+                    ),
+                  )
+                else
+                  // Loading state - show shimmer only, no retry UI
+                  Container(
+                    color: fallback,
+                    child: const Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white54,
+                        ),
+                      ),
+                    ),
+                  ),
                 _UploadStatusOverlay(
                   status: widget.message.uploadStatus,
                   progress: widget.message.uploadProgress,
                   onRetry: widget.onRetry,
                 ),
-                Positioned(
-                  right: 6,
-                  bottom: 6,
-                  child: _MediaMetaOverlay(
-                    timestamp: widget.message.timestamp,
-                    isMe: widget.isMe,
-                    status: widget.message.status,
-                    isPending: widget.message.hasPendingWrites,
-                  ),
-                ),
               ],
             ),
           ),
         ),
+      );
+
+      final heroWrapped = (widget.heroTag != null)
+          ? Hero(tag: widget.heroTag!, child: unresolvedPreview)
+          : unresolvedPreview;
+
+      if (widget.onOpenOverride == null) return heroWrapped;
+
+      return GestureDetector(onTap: widget.onOpenOverride, child: heroWrapped);
+    }
+
+    final preview = ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: maxW,
+        maxHeight: maxH,
+        minWidth: minSize,
+        minHeight: minSize,
       ),
+      child: SizedBox(
+        width: boxSize.width,
+        height: boxSize.height,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _BlurredPlaceholder(
+                image: placeholderProvider,
+                blurred: true,
+                fallback: fallback,
+              ),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                transitionBuilder: (child, anim) =>
+                    FadeTransition(opacity: anim, child: child),
+                child: actualProvider != null
+                    ? Image(
+                        key: ValueKey(actualKey),
+                        image: actualProvider,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: double.infinity,
+                        errorBuilder: (_, __, ___) => _MediaErrorFallback(
+                          placeholder: placeholderProvider,
+                          onRetry: widget.onRetry,
+                          fallback: fallback,
+                        ),
+                      )
+                    : const SizedBox.expand(),
+              ),
+              _UploadStatusOverlay(
+                status: widget.message.uploadStatus,
+                progress: widget.message.uploadProgress,
+                onRetry: widget.onRetry,
+              ),
+              Positioned(
+                right: 6,
+                bottom: 6,
+                child: _MediaMetaOverlay(
+                  timestamp: widget.message.timestamp,
+                  isMe: widget.isMe,
+                  status: widget.message.status,
+                  isPending: widget.message.hasPendingWrites,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final heroWrapped = (widget.heroTag != null)
+        ? Hero(tag: widget.heroTag!, child: preview)
+        : preview;
+
+    return GestureDetector(
+      onTap: () {
+        final override = widget.onOpenOverride;
+        if (override != null) {
+          override();
+          return;
+        }
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => _SingleImageViewer(
+              url: _resolved!,
+              heroTag: widget.heroTag ?? _resolved!,
+            ),
+          ),
+        );
+      },
+      child: heroWrapped,
     );
   }
 }
@@ -562,6 +661,147 @@ class _ShimmerBox extends StatefulWidget {
 
   @override
   State<_ShimmerBox> createState() => _ShimmerBoxState();
+}
+
+class _BlurredPlaceholder extends StatelessWidget {
+  final ImageProvider? image;
+  final bool blurred;
+  final Color fallback;
+  const _BlurredPlaceholder({
+    super.key,
+    required this.image,
+    required this.blurred,
+    required this.fallback,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Widget base;
+    if (image != null) {
+      base = Image(
+        image: image!,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (_, __, ___) => ColoredBox(color: fallback),
+      );
+    } else {
+      base = ColoredBox(color: fallback);
+    }
+
+    if (!blurred) return base;
+    return ImageFiltered(
+      imageFilter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+      child: base,
+    );
+  }
+}
+
+class _MediaErrorFallback extends StatefulWidget {
+  final ImageProvider? placeholder;
+  final RetryUpload onRetry;
+  final Color fallback;
+  const _MediaErrorFallback({
+    required this.placeholder,
+    required this.onRetry,
+    required this.fallback,
+  });
+
+  @override
+  State<_MediaErrorFallback> createState() => _MediaErrorFallbackState();
+}
+
+class _MediaErrorFallbackState extends State<_MediaErrorFallback> {
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _BlurredPlaceholder(
+          image: widget.placeholder,
+          blurred: false,
+          fallback: widget.fallback,
+        ),
+      ],
+    );
+  }
+}
+
+class _AudioSkeleton extends StatelessWidget {
+  final bool isMe;
+  final List<double> bars;
+  const _AudioSkeleton({super.key, required this.isMe, required this.bars});
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isMe ? const Color(0xFF4752C4) : const Color(0xFF0F0F0F);
+    final unplayed = Colors.white.withOpacity(0.24);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: ColoredBox(
+        color: bg,
+        child: SizedBox(
+          width: 260,
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.play_arrow,
+                            color: Colors.white54,
+                          ),
+                          onPressed: null,
+                        ),
+                        Expanded(
+                          child: SizedBox(
+                            height: 34,
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                return CustomPaint(
+                                  size: Size(constraints.maxWidth, 34),
+                                  painter: _WaveformPainter(
+                                    bars: bars,
+                                    progress: 0.0,
+                                    playedColor: Colors.white54,
+                                    unplayedColor: unplayed,
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8, top: 2),
+                      child: LinearProgressIndicator(
+                        minHeight: 2,
+                        backgroundColor: Colors.white12,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.white70,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Opacity(opacity: 0.18, child: _ShimmerBox(radius: 14)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ShimmerBoxState extends State<_ShimmerBox>
@@ -616,10 +856,14 @@ class _VideoPreview extends StatefulWidget {
   final MessageModel message;
   final bool isMe;
   final RetryUpload onRetry;
+  final VoidCallback? onOpenOverride;
+  final String? heroTag;
   const _VideoPreview({
     required this.message,
     required this.isMe,
     required this.onRetry,
+    this.onOpenOverride,
+    this.heroTag,
   });
   @override
   State<_VideoPreview> createState() => _VideoPreviewState();
@@ -627,15 +871,21 @@ class _VideoPreview extends StatefulWidget {
 
 class _VideoPreviewState extends State<_VideoPreview> {
   late Future<String> _resolvedFuture;
-  VideoPlayerController? _controller;
-  String? _resolvedUrl;
   bool _cacheWriteStarted = false;
-
-  static const Duration _resolveTimeout = Duration(seconds: 6);
+  VideoPlayerController? _warmController;
+  String? _warmUrl;
+  bool _prewarmRequested = false;
+  Timer? _resolveRetryTimer;
+  bool _failed = false;
+  bool _loaded = false;
+  Timer? _failFastTimer;
 
   @override
   void initState() {
     super.initState();
+    _failFastTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted && !_loaded) setState(() => _failed = true);
+    });
     _resolvedFuture = _resolve();
   }
 
@@ -650,24 +900,41 @@ class _VideoPreviewState extends State<_VideoPreview> {
       setState(() {
         _resolvedFuture = _resolve();
         _cacheWriteStarted = false;
+        _prewarmRequested = false;
       });
-      _disposeController();
+      _resolveRetryTimer?.cancel();
+      _disposeWarmController();
     }
+  }
+
+  void _scheduleResolveRetry() {
+    // No retry UI / no infinite loops.
   }
 
   Future<String> _resolve() async {
     final local = _bestExistingLocalPath(widget.message);
     if (local != null) {
+      _loaded = true;
       return local;
     }
-    final v = widget.message.mediaUrl ?? '';
+    final v = (widget.message.storagePath ?? '').isNotEmpty
+        ? (widget.message.storagePath ?? '')
+        : (widget.message.mediaUrl ?? '');
     if (v.isEmpty) {
       throw StateError('Empty video url');
     }
-    return _resolveMediaUrl(
-      v,
-      widget.message.messageType,
-    ).timeout(_resolveTimeout);
+    String? resolved;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      resolved = _resolveMediaUrlOrNull(v, bucket: widget.message.bucket);
+      if (resolved != null && resolved.isNotEmpty) break;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    if (resolved == null || resolved.isEmpty) {
+      _failed = true;
+      throw StateError('Failed to resolve video url');
+    }
+    _loaded = true;
+    return resolved;
   }
 
   Future<void> _cacheRemoteIfNeeded(String resolved) async {
@@ -692,48 +959,102 @@ class _VideoPreviewState extends State<_VideoPreview> {
     }
   }
 
-  @override
-  void dispose() {
-    _disposeController();
-    super.dispose();
-  }
-
-  void _disposeController() {
-    final c = _controller;
-    _controller = null;
-    _resolvedUrl = null;
+  void _disposeWarmController() {
+    final c = _warmController;
+    _warmController = null;
+    _warmUrl = null;
     c?.dispose();
   }
 
-  Future<void> _ensureController(String resolvedUrl) async {
-    if (_resolvedUrl == resolvedUrl && _controller != null) return;
-
-    _disposeController();
-    _resolvedUrl = resolvedUrl;
+  Future<void> _ensureWarmController(String resolvedUrl) async {
+    if (_warmUrl == resolvedUrl && _warmController != null) return;
+    _disposeWarmController();
+    _warmUrl = resolvedUrl;
     final isRemote =
-      resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://');
+        resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://');
     final c = isRemote
-      ? VideoPlayerController.networkUrl(Uri.parse(resolvedUrl))
-      : VideoPlayerController.file(File(resolvedUrl));
-    _controller = c;
+        ? VideoPlayerController.networkUrl(Uri.parse(resolvedUrl))
+        : VideoPlayerController.file(File(resolvedUrl));
+    _warmController = c;
     try {
       await c.initialize();
-      await c.setLooping(false);
       await c.pause();
-      if (mounted) setState(() {});
     } catch (_) {
-      // If initialization fails, we'll fall back to the color placeholder.
+      _disposeWarmController();
     }
+  }
+
+  void _schedulePrewarm(String resolved) {
+    if (_prewarmRequested) return;
+    _prewarmRequested = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box = context.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) return;
+      final offset = box.localToGlobal(Offset.zero);
+      final rect = offset & box.size;
+      final screen = Offset.zero & MediaQuery.of(context).size;
+      final intersection = rect.intersect(screen);
+      if (intersection.isEmpty) return;
+      final visibleFraction =
+          (intersection.width * intersection.height) /
+          (rect.width * rect.height);
+      if (visibleFraction >= 0.2) {
+        unawaited(_ensureWarmController(resolved));
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _resolveRetryTimer?.cancel();
+    _failFastTimer?.cancel();
+    _disposeWarmController();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final thumb = widget.message.thumbnailUrl;
+    final placeholderProvider = _mediaPlaceholderProvider(
+      localPath: null,
+      thumbUrl: thumb,
+    );
+    final fallback = AppColors.highlight.withOpacity(0.65);
 
     final maxW = MediaQuery.of(context).size.width * 0.65;
     const minSize = 140.0;
     const maxH = 280.0;
     const aspect = 16 / 9;
+    final boxSize = _mediaBoxSize(
+      maxW: maxW,
+      maxH: maxH,
+      minSize: minSize,
+      aspectRatio: aspect,
+    );
+
+    if (_failed) {
+      return ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxW,
+          maxHeight: maxH,
+          minWidth: minSize,
+          minHeight: minSize,
+        ),
+        child: SizedBox(
+          width: boxSize.width,
+          height: boxSize.height,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: _BlurredPlaceholder(
+              image: placeholderProvider,
+              blurred: true,
+              fallback: fallback,
+            ),
+          ),
+        ),
+      );
+    }
 
     return FutureBuilder<String>(
       future: _resolvedFuture,
@@ -748,10 +1069,11 @@ class _VideoPreviewState extends State<_VideoPreview> {
               minWidth: minSize,
               minHeight: minSize,
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: AspectRatio(
-                aspectRatio: aspect,
+            child: SizedBox(
+              width: boxSize.width,
+              height: boxSize.height,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -802,17 +1124,42 @@ class _VideoPreviewState extends State<_VideoPreview> {
               minWidth: minSize,
               minHeight: minSize,
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: AspectRatio(
-                aspectRatio: aspect,
-                child: const _ShimmerBox(radius: 14),
+            child: SizedBox(
+              width: boxSize.width,
+              height: boxSize.height,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _BlurredPlaceholder(
+                      image: placeholderProvider,
+                      blurred: true,
+                      fallback: fallback,
+                    ),
+                    const Center(
+                      child: Icon(
+                        Icons.play_circle_fill_rounded,
+                        size: 44,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
         }
 
         if (snap.hasError || snap.data == null || (snap.data ?? '').isEmpty) {
+          _scheduleResolveRetry();
           return ConstrainedBox(
             constraints: BoxConstraints(
               maxWidth: maxW,
@@ -820,19 +1167,31 @@ class _VideoPreviewState extends State<_VideoPreview> {
               minWidth: minSize,
               minHeight: minSize,
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: AspectRatio(
-                aspectRatio: aspect,
+            child: SizedBox(
+              width: boxSize.width,
+              height: boxSize.height,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    const _ShimmerBox(radius: 14),
+                    _BlurredPlaceholder(
+                      image: placeholderProvider,
+                      blurred: true,
+                      fallback: fallback,
+                    ),
                     const Center(
                       child: Icon(
                         Icons.play_circle_fill_rounded,
                         size: 44,
                         color: Colors.white,
+                      ),
+                    ),
+                    const Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       ),
                     ),
                     Positioned(
@@ -856,45 +1215,38 @@ class _VideoPreviewState extends State<_VideoPreview> {
 
         if (resolved != null && resolved.isNotEmpty) {
           unawaited(_cacheRemoteIfNeeded(resolved));
-          // Initialize controller to show first frame as a thumbnail.
-          unawaited(_ensureController(resolved));
+          _schedulePrewarm(resolved);
         }
 
         // Duration badge requires duration metadata; keep null for now.
         final String? durationLabel = null;
 
-        return ConstrainedBox(
+        Widget content = ConstrainedBox(
           constraints: BoxConstraints(
             maxWidth: maxW,
             maxHeight: maxH,
             minWidth: minSize,
             minHeight: minSize,
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: AspectRatio(
-              aspectRatio: aspect,
+          child: SizedBox(
+            width: boxSize.width,
+            height: boxSize.height,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (resolved == null)
-                    const _ShimmerBox(radius: 14)
-                  else if (_controller != null &&
-                      _controller!.value.isInitialized)
-                    FittedBox(
-                      fit: BoxFit.cover,
-                      clipBehavior: Clip.hardEdge,
-                      child: SizedBox(
-                        width: _controller!.value.size.width,
-                        height: _controller!.value.size.height,
-                        child: VideoPlayer(_controller!),
-                      ),
-                    )
-                  else
-                    ColoredBox(
-                      color: AppColors.highlight.withOpacity(0.65),
-                      child: const SizedBox.expand(),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    transitionBuilder: (child, anim) =>
+                        FadeTransition(opacity: anim, child: child),
+                    child: _BlurredPlaceholder(
+                      key: ValueKey(resolved == null ? 'blur' : 'sharp'),
+                      image: placeholderProvider,
+                      blurred: resolved == null,
+                      fallback: fallback,
                     ),
+                  ),
                   const Center(
                     child: Icon(
                       Icons.play_circle_fill_rounded,
@@ -941,11 +1293,18 @@ class _VideoPreviewState extends State<_VideoPreview> {
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTap: () {
+                        final override = widget.onOpenOverride;
+                        if (override != null) {
+                          override();
+                          return;
+                        }
+                        // Fallback to legacy fullscreen
                         Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => _VideoFullscreen(
                               url: widget.message.mediaUrl ?? '',
                               type: widget.message.messageType,
+                              bucket: widget.message.bucket,
                             ),
                           ),
                         );
@@ -958,6 +1317,16 @@ class _VideoPreviewState extends State<_VideoPreview> {
             ),
           ),
         );
+
+        // Wrap with Hero if heroTag is provided
+        if (widget.heroTag != null) {
+          content = Hero(
+            tag: widget.heroTag!,
+            child: Material(color: Colors.transparent, child: content),
+          );
+        }
+
+        return content;
       },
     );
   }
@@ -979,11 +1348,20 @@ class _AudioInline extends StatefulWidget {
 class _AudioInlineState extends State<_AudioInline> {
   late final AudioPlayer _player;
   bool _loading = true;
-  Object? _error;
+  bool _failed = false;
+  bool _loaded = false;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   late final List<double> _bars;
   bool _cacheWriteStarted = false;
+  bool _downloadLoopStarted = false;
+  bool _sourceSet = false;
+  bool _usingLocal = false;
+  String? _resolvedStreamingUrl;
+  bool _isPrewarmed = false;
+  bool _optimisticPlaying = false;
+  int _downloadAttempts = 0;
+  Timer? _failFastTimer;
   StreamSubscription<Duration>? _posSub;
   StreamSubscription<Duration?>? _durSub;
   StreamSubscription<PlayerState>? _stateSub;
@@ -993,7 +1371,13 @@ class _AudioInlineState extends State<_AudioInline> {
     super.initState();
     _player = AudioPlayer();
     _bars = _generateBars(widget.message.mediaUrl ?? widget.message.id);
-    _init();
+    _failFastTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted && !_loaded) {
+        setState(() => _failed = true);
+      }
+    });
+    unawaited(_resolveAndWarm());
+    _startAutoDownload();
   }
 
   @override
@@ -1005,84 +1389,246 @@ class _AudioInlineState extends State<_AudioInline> {
     final newUrl = widget.message.mediaUrl;
     if (oldLocal != newLocal || oldUrl != newUrl) {
       _cacheWriteStarted = false;
-      _error = null;
       _position = Duration.zero;
       _duration = Duration.zero;
       _loading = true;
-      unawaited(_init());
+      _downloadLoopStarted = false;
+      _downloadAttempts = 0;
+      _sourceSet = false;
+      _usingLocal = false;
+      _resolvedStreamingUrl = null;
+      _isPrewarmed = false;
+      _optimisticPlaying = false;
+      unawaited(_resolveAndWarm());
+      unawaited(_startAutoDownload());
     }
   }
 
-  Future<void> _cacheRemoteIfNeeded(String resolved) async {
-    if (_cacheWriteStarted) return;
-    if (!(resolved.startsWith('http://') || resolved.startsWith('https://'))) {
-      return;
+  Future<void> _resolveAndWarm() async {
+    try {
+      if (_isPrewarmed || _sourceSet) {
+        unawaited(_player.play());
+        return;
+      }
+      // Check for existing local file first (offline playback)
+      final existing = _bestExistingLocalPath(widget.message);
+      if (existing != null && existing.isNotEmpty) {
+        await _player.setAudioSource(AudioSource.file(existing));
+        await _player.load();
+        _duration = _player.duration ?? Duration.zero;
+        await _wirePlayerStreams();
+        _sourceSet = true;
+        _usingLocal = true;
+        _isPrewarmed = true;
+        if (mounted) {
+          setState(() => _loading = false);
+        }
+        _loaded = true;
+        return;
+      }
+
+      // Resolve URL from the strict single-format field first.
+      // Fall back to legacy fields for backwards compatibility.
+      final raw = ((widget.message.storagePath ?? '').trim().isNotEmpty)
+          ? (widget.message.storagePath ?? '').trim()
+          : ((widget.message.mediaUrl ?? '').trim().isNotEmpty)
+          ? (widget.message.mediaUrl ?? '').trim()
+          : (widget.message.mediaPath ?? '').trim();
+      if (raw.isEmpty) return;
+
+      final resolved = VoiceNoteService.resolveUrl(
+        raw,
+        bucket: widget.message.bucket,
+      );
+      if (resolved.isEmpty) return;
+
+      _resolvedStreamingUrl = resolved;
+
+      // Prewarm for instant playback - stream while downloading
+      await _player.setAudioSource(
+        AudioSource.uri(Uri.parse(resolved)),
+        preload: true,
+      );
+      await _player.load();
+      _duration = _player.duration ?? Duration.zero;
+      await _wirePlayerStreams();
+      _sourceSet = true;
+      _usingLocal = false;
+      _isPrewarmed = true;
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+      _loaded = true;
+    } catch (_) {
+      // Silent fail - background download will retry
     }
+  }
+
+  Future<void> _playWhenReady() async {
+    try {
+      if (_isPrewarmed || _sourceSet) {
+        unawaited(_player.play());
+        return;
+      }
+
+      await _resolveAndWarm();
+      if (_sourceSet) unawaited(_player.play());
+    } catch (_) {
+      // silent
+    }
+  }
+
+  Future<void> _persistCachedPathIfNeeded(String filePath) async {
+    if (_cacheWriteStarted) return;
     if (_bestExistingLocalPath(widget.message) != null) return;
     _cacheWriteStarted = true;
     try {
-      final file = await DefaultCacheManager().getSingleFile(resolved);
-      if (!file.existsSync()) return;
       await FirebaseFirestore.instance
           .collection('dmChats')
           .doc(widget.message.chatId)
           .collection('messages')
           .doc(widget.message.id)
-          .set({'cachedPath': file.path}, SetOptions(merge: true));
+          .set({'cachedPath': filePath}, SetOptions(merge: true));
     } catch (_) {
       _cacheWriteStarted = false;
     }
   }
 
-  Future<void> _init() async {
-    try {
-      final local = _bestExistingLocalPath(widget.message);
-      if (local != null) {
-        await _player.setAudioSource(AudioSource.file(local));
-      } else {
-        final v = widget.message.mediaUrl ?? '';
-        if (v.isEmpty) {
-          _error = StateError('Empty audio url');
-          return;
+  Future<void> _wirePlayerStreams() async {
+    await _posSub?.cancel();
+    _posSub = _player.positionStream.listen((p) {
+      if (!mounted) return;
+      setState(() => _position = p);
+    });
+
+    await _durSub?.cancel();
+    _durSub = _player.durationStream.listen((d) {
+      if (!mounted) return;
+      setState(() => _duration = d ?? Duration.zero);
+    });
+
+    await _stateSub?.cancel();
+    _stateSub = _player.playerStateStream.listen((s) {
+      if (!mounted) return;
+      final nowPlaying = _player.playing;
+      if (_optimisticPlaying != nowPlaying) {
+        setState(() => _optimisticPlaying = nowPlaying);
+      }
+      if (s.processingState == ProcessingState.completed) {
+        unawaited(_player.seek(Duration.zero));
+        unawaited(_player.pause());
+        setState(() => _position = Duration.zero);
+      }
+    });
+  }
+
+  Future<void> _startAutoDownload() async {
+    if (_downloadLoopStarted) return;
+    _downloadLoopStarted = true;
+    if (!_sourceSet && mounted) setState(() => _loading = true);
+
+    // Silent retry (max 3 attempts) - never infinite.
+    while (mounted && _downloadAttempts < 3) {
+      try {
+        // Check for existing local file first
+        final existing = _bestExistingLocalPath(widget.message);
+        if (existing != null && existing.isNotEmpty) {
+          if (!_sourceSet) {
+            await _player.setAudioSource(AudioSource.file(existing));
+            await _player.load();
+            _duration = _player.duration ?? Duration.zero;
+            await _wirePlayerStreams();
+            _sourceSet = true;
+            _usingLocal = true;
+            _isPrewarmed = true;
+            if (mounted) {
+              setState(() => _loading = false);
+            }
+          }
+          return; // Successfully using local file
         }
-        final u = await _resolveMediaUrl(v, widget.message.messageType);
-        await _cacheRemoteIfNeeded(u);
-        await _player.setUrl(u);
+
+        final raw = ((widget.message.storagePath ?? '').trim().isNotEmpty)
+            ? (widget.message.storagePath ?? '').trim()
+            : ((widget.message.mediaUrl ?? '').trim().isNotEmpty)
+            ? (widget.message.mediaUrl ?? '').trim()
+            : (widget.message.mediaPath ?? '').trim();
+        if (raw.isEmpty) {
+          await Future.delayed(const Duration(seconds: 2));
+          _downloadAttempts++;
+          continue;
+        }
+
+        // Resolve URL if not already done
+        final resolved =
+            _resolvedStreamingUrl ??
+            VoiceNoteService.resolveUrl(raw, bucket: widget.message.bucket);
+        if (resolved.isEmpty) {
+          await Future.delayed(const Duration(seconds: 2));
+          _downloadAttempts++;
+          continue;
+        }
+        _resolvedStreamingUrl ??= resolved;
+
+        // Start streaming immediately if not already set
+        if (!_sourceSet) {
+          unawaited(_resolveAndWarm());
+        }
+
+        // Try to download and cache
+        final file = await VoiceNoteService.downloadWithRetry(
+          resolved,
+          onComplete: (f) {},
+          onRetry: (attempt, error) {
+            if (kDebugMode) {
+              debugPrint('🔄 Voice note download retry #$attempt: $error');
+            }
+          },
+        );
+
+        if (file != null && file.existsSync()) {
+          await _persistCachedPathIfNeeded(file.path);
+
+          // Switch to local file for better playback
+          if (!_usingLocal) {
+            final wasPlaying = _player.playing;
+            final pos = _player.position;
+            await _player.setAudioSource(AudioSource.file(file.path));
+            await _player.load();
+            _duration = _player.duration ?? Duration.zero;
+            await _wirePlayerStreams();
+            _usingLocal = true;
+            _sourceSet = true;
+            _isPrewarmed = true;
+            await _player.seek(pos);
+            if (wasPlaying) {
+              unawaited(_player.play());
+            }
+            if (mounted) {
+              setState(() => _loading = false);
+            }
+          }
+          return; // Successfully downloaded and cached
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('❌ Voice note download error: $e');
+        }
       }
 
-      _duration = _player.duration ?? Duration.zero;
-
-      await _posSub?.cancel();
-      _posSub = _player.positionStream.listen((p) {
-        if (!mounted) return;
-        setState(() => _position = p);
-      });
-
-      await _durSub?.cancel();
-      _durSub = _player.durationStream.listen((d) {
-        if (!mounted) return;
-        setState(() => _duration = d ?? Duration.zero);
-      });
-
-      await _stateSub?.cancel();
-      _stateSub = _player.playerStateStream.listen((s) {
-        if (!mounted) return;
-        if (s.processingState == ProcessingState.completed) {
-          // Reset to start and pause so next play starts from 0.
-          unawaited(_player.seek(Duration.zero));
-          unawaited(_player.pause());
-          setState(() => _position = Duration.zero);
-        }
-      });
-    } catch (e) {
-      _error = e;
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      _downloadAttempts++;
+      if (_downloadAttempts < 3) {
+        await Future.delayed(const Duration(seconds: 2));
+      }
     }
+
+    // After max attempts, stop trying but keep showing skeleton
+    // User can still play via streaming if that worked
   }
 
   @override
   void dispose() {
+    _failFastTimer?.cancel();
     _posSub?.cancel();
     _durSub?.cancel();
     _stateSub?.cancel();
@@ -1092,184 +1638,165 @@ class _AudioInlineState extends State<_AudioInline> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.message.uploadStatus == 'failed') {
-      return _AudioPendingInline(
+    Widget content;
+    if (_failed && _bestExistingLocalPath(widget.message) == null) {
+      content = _AudioSkeleton(
+        key: const ValueKey('failed'),
+        isMe: widget.isMe,
+        bars: _bars,
+      );
+    } else if (widget.message.uploadStatus == 'failed') {
+      content = _AudioPendingInline(
+        key: const ValueKey('upload_failed'),
         isMe: widget.isMe,
         status: widget.message.uploadStatus,
         progress: widget.message.uploadProgress,
-        onRetry: widget.onRetry,
       );
-    }
-    if (widget.message.uploadStatus == 'uploading' &&
+    } else if (widget.message.uploadStatus == 'uploading' &&
         _bestExistingLocalPath(widget.message) == null) {
-      return _AudioPendingInline(
+      content = _AudioPendingInline(
+        key: const ValueKey('uploading'),
         isMe: widget.isMe,
         status: widget.message.uploadStatus,
         progress: widget.message.uploadProgress,
       );
-    }
-
-    if (_loading) {
-      return const SizedBox(
-        width: 220,
-        height: 48,
-        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+    } else if (_loading) {
+      content = _AudioSkeleton(
+        key: const ValueKey('loading'),
+        isMe: widget.isMe,
+        bars: _bars,
       );
-    }
-
-    if (_error != null) {
+    } else {
+      final playing = _player.playing || _optimisticPlaying;
+      const mainColor = Color(0xFFFFFFFF);
+      const playedColor = Color(0xFFFFFFFF);
+      final unplayedColor = Colors.white.withOpacity(0.24);
       final bg = widget.isMe
           ? const Color(0xFF4752C4)
           : const Color(0xFF0F0F0F);
-      return ClipRRect(
+      content = ClipRRect(
+        key: const ValueKey('ready'),
         borderRadius: BorderRadius.circular(14),
         child: ColoredBox(
           color: bg,
           child: SizedBox(
             width: 260,
-            height: 54,
-            child: Row(
-              children: [
-                const SizedBox(width: 12),
-                const Icon(Icons.volume_off, color: Colors.white),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    widget.message.uploadStatus == 'failed'
-                        ? 'Audio failed'
-                        : 'Audio unavailable',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          playing ? Icons.pause : Icons.play_arrow,
+                          color: mainColor,
+                        ),
+                        onPressed: () {
+                          if (playing) {
+                            setState(() => _optimisticPlaying = false);
+                            unawaited(_player.pause());
+                            return;
+                          }
+                          setState(() => _optimisticPlaying = true);
+                          unawaited(_playWhenReady());
+                        },
+                      ),
+                      Expanded(
+                        child: SizedBox(
+                          height: 34,
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final w = constraints.maxWidth;
+                              final progress = _duration.inMilliseconds == 0
+                                  ? 0.0
+                                  : _position.inMilliseconds /
+                                        _duration.inMilliseconds;
+                              return Stack(
+                                children: [
+                                  CustomPaint(
+                                    size: Size(w, 34),
+                                    painter: _WaveformPainter(
+                                      bars: _bars,
+                                      progress: progress,
+                                      playedColor: playedColor,
+                                      unplayedColor: unplayedColor,
+                                    ),
+                                  ),
+                                  Positioned(
+                                    left: (w * progress).clamp(0.0, w - 10.0),
+                                    top: 12,
+                                    child: Container(
+                                      width: 10,
+                                      height: 10,
+                                      decoration: BoxDecoration(
+                                        color: mainColor,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned.fill(
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onHorizontalDragUpdate: (d) {
+                                        final dx = d.localPosition.dx.clamp(
+                                          0.0,
+                                          w,
+                                        );
+                                        final ratio = dx / w;
+                                        final ms =
+                                            (_duration.inMilliseconds * ratio)
+                                                .toInt();
+                                        _player.seek(
+                                          Duration(milliseconds: ms),
+                                        );
+                                      },
+                                      onTapDown: (d) {
+                                        final dx = d.localPosition.dx.clamp(
+                                          0.0,
+                                          w,
+                                        );
+                                        final ratio = dx / w;
+                                        final ms =
+                                            (_duration.inMilliseconds * ratio)
+                                                .toInt();
+                                        _player.seek(
+                                          Duration(milliseconds: ms),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 8.0, top: 2),
+                      child: Text(
+                        '${_format(_position)} / ${_format(_duration)}',
+                        style: TextStyle(fontSize: 11, color: mainColor),
+                      ),
                     ),
                   ),
-                ),
-                if (widget.message.uploadStatus == 'failed')
-                  IconButton(
-                    onPressed: widget.onRetry,
-                    icon: const Icon(
-                      Icons.refresh_rounded,
-                      color: Colors.white,
-                    ),
-                  ),
-                const SizedBox(width: 12),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       );
     }
-    final playing = _player.playing;
-    const mainColor = Color(0xFFFFFFFF);
-    const playedColor = Color(0xFFFFFFFF);
-    final unplayedColor = Colors.white.withOpacity(0.24);
-    final bg = widget.isMe ? const Color(0xFF4752C4) : const Color(0xFF0F0F0F);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: ColoredBox(
-        color: bg,
-        child: SizedBox(
-          width: 260,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        playing ? Icons.pause : Icons.play_arrow,
-                        color: mainColor,
-                      ),
-                      onPressed: () =>
-                          playing ? _player.pause() : _player.play(),
-                    ),
-                    Expanded(
-                      child: SizedBox(
-                        height: 34,
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final w = constraints.maxWidth;
-                            final progress = _duration.inMilliseconds == 0
-                                ? 0.0
-                                : _position.inMilliseconds /
-                                      _duration.inMilliseconds;
-                            return Stack(
-                              children: [
-                                CustomPaint(
-                                  size: Size(w, 34),
-                                  painter: _WaveformPainter(
-                                    bars: _bars,
-                                    progress: progress,
-                                    playedColor: playedColor,
-                                    unplayedColor: unplayedColor,
-                                  ),
-                                ),
-                                Positioned(
-                                  left: (w * progress).clamp(0.0, w - 10.0),
-                                  top: 12,
-                                  child: Container(
-                                    width: 10,
-                                    height: 10,
-                                    decoration: BoxDecoration(
-                                      color: mainColor,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                ),
-                                Positioned.fill(
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onHorizontalDragUpdate: (d) {
-                                      final dx = d.localPosition.dx.clamp(
-                                        0.0,
-                                        w,
-                                      );
-                                      final ratio = dx / w;
-                                      final ms =
-                                          (_duration.inMilliseconds * ratio)
-                                              .toInt();
-                                      _player.seek(Duration(milliseconds: ms));
-                                    },
-                                    onTapDown: (d) {
-                                      final dx = d.localPosition.dx.clamp(
-                                        0.0,
-                                        w,
-                                      );
-                                      final ratio = dx / w;
-                                      final ms =
-                                          (_duration.inMilliseconds * ratio)
-                                              .toInt();
-                                      _player.seek(Duration(milliseconds: ms));
-                                    },
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 8.0, top: 2),
-                    child: Text(
-                      '${_format(_position)} / ${_format(_duration)}',
-                      style: TextStyle(fontSize: 11, color: mainColor),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 250),
+      transitionBuilder: (child, anim) =>
+          FadeTransition(opacity: anim, child: child),
+      child: content,
     );
   }
 
@@ -1380,15 +1907,26 @@ class _FileTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final local = _bestExistingLocalPath(message);
-    final rawUrl = message.mediaUrl ?? '';
-    return FutureBuilder<String>(
+    final rawUrl = (message.storagePath ?? '').isNotEmpty
+        ? (message.storagePath ?? '')
+        : (message.mediaUrl ?? '');
+    return FutureBuilder<String?>(
       future: () async {
         if (local != null) return local;
         if (rawUrl.isEmpty) {
-          throw StateError('Empty file url');
+          return null;
         }
-        final resolved = await _resolveMediaUrl(rawUrl, message.messageType);
-        if ((resolved.startsWith('http://') || resolved.startsWith('https://')) &&
+        String? resolved;
+        for (var attempt = 0; attempt < 3; attempt++) {
+          resolved = _resolveMediaUrlOrNull(rawUrl, bucket: message.bucket);
+          if (resolved != null && resolved.isNotEmpty) break;
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+        }
+        if (resolved == null || resolved.isEmpty) {
+          return null;
+        }
+        if ((resolved.startsWith('http://') ||
+                resolved.startsWith('https://')) &&
             message.cachedPath == null) {
           try {
             final file = await DefaultCacheManager().getSingleFile(resolved);
@@ -1415,10 +1953,11 @@ class _FileTile extends StatelessWidget {
         final failed = message.uploadStatus == 'failed';
         return GestureDetector(
           onTap: () {
-            if (!snap.hasData) return;
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => _PdfMaybe(url: snap.data!)),
-            );
+            final u = snap.data;
+            if (u == null || u.isEmpty) return;
+            Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => _PdfMaybe(url: u)));
           },
           child: ClipRRect(
             borderRadius: BorderRadius.circular(14),
@@ -1437,7 +1976,11 @@ class _FileTile extends StatelessWidget {
                             width: 40,
                             height: 40,
                             child: Center(
-                              child: Icon(_iconForExt(ext), color: tc, size: 22),
+                              child: Icon(
+                                _iconForExt(ext),
+                                color: tc,
+                                size: 22,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 10),
@@ -1481,9 +2024,7 @@ class _FileTile extends StatelessWidget {
                   ),
                 ),
                 if (uploading || failed)
-                  Positioned.fill(
-                    child: ColoredBox(color: Colors.black26),
-                  ),
+                  Positioned.fill(child: ColoredBox(color: Colors.black26)),
                 _UploadStatusOverlay(
                   status: message.uploadStatus,
                   progress: message.uploadProgress,
@@ -1571,19 +2112,6 @@ class _MediaMetaOverlay extends StatelessWidget {
   }
 }
 
-class _MediaErrorBox extends StatelessWidget {
-  final IconData icon;
-  const _MediaErrorBox({required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: AppColors.highlight.withOpacity(0.65),
-      child: Center(child: Icon(icon, color: Colors.black54, size: 28)),
-    );
-  }
-}
-
 class _PdfMaybe extends StatelessWidget {
   final String url;
   const _PdfMaybe({required this.url});
@@ -1630,10 +2158,183 @@ class _PdfMaybe extends StatelessWidget {
   }
 }
 
+class _SingleImageViewer extends StatefulWidget {
+  final String url;
+  final String heroTag;
+  const _SingleImageViewer({required this.url, required this.heroTag});
+
+  @override
+  State<_SingleImageViewer> createState() => _SingleImageViewerState();
+}
+
+class _SingleImageViewerState extends State<_SingleImageViewer> {
+  bool _showUi = true;
+  bool _ready = false;
+  bool _failed = false;
+  double _dragDy = 0;
+
+  void _onVerticalDragUpdate(DragUpdateDetails d) {
+    setState(() => _dragDy += d.delta.dy);
+  }
+
+  void _onVerticalDragEnd(DragEndDetails d) {
+    final v = d.velocity.pixelsPerSecond.dy.abs();
+    final dy = _dragDy.abs();
+    if (dy > 120 || v > 900) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() => _dragDy = 0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = _sharedNetworkProvider(widget.url);
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: () => setState(() => _showUi = !_showUi),
+        onVerticalDragUpdate: _onVerticalDragUpdate,
+        onVerticalDragEnd: _onVerticalDragEnd,
+        child: Stack(
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              color: Colors.black.withOpacity(
+                (1.0 - (_dragDy.abs() / 280).clamp(0.0, 0.6)),
+              ),
+            ),
+            Transform.translate(
+              offset: Offset(0, _dragDy),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _BlurredPlaceholder(
+                    image: provider,
+                    blurred: true,
+                    fallback: Colors.black54,
+                  ),
+                  AnimatedOpacity(
+                    opacity: _ready ? 1 : 0,
+                    duration: const Duration(milliseconds: 250),
+                    child: Hero(
+                      tag: widget.heroTag,
+                      child: InteractiveViewer(
+                        minScale: 1,
+                        maxScale: 4,
+                        child: Image(
+                          image: provider,
+                          fit: BoxFit.contain,
+                          width: double.infinity,
+                          height: double.infinity,
+                          frameBuilder: (context, child, frame, wasSync) {
+                            if (frame != null && !_ready) {
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) setState(() => _ready = true);
+                              });
+                            }
+                            return child;
+                          },
+                          errorBuilder: (_, __, ___) {
+                            if (!_failed) {
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) setState(() => _failed = true);
+                              });
+                            }
+                            return const ColoredBox(color: Colors.black54);
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_failed)
+                    Center(
+                      child: Material(
+                        color: Colors.black45,
+                        shape: const CircleBorder(),
+                        child: IconButton(
+                          icon: const Icon(
+                            Icons.refresh_rounded,
+                            color: Colors.white,
+                          ),
+                          onPressed: () => setState(() {
+                            _failed = false;
+                            _ready = false;
+                          }),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedOpacity(
+                opacity: _showUi ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.arrow_back,
+                            color: Colors.white,
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                        const Text(
+                          '1 / 1',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.download,
+                                color: Colors.white,
+                              ),
+                              onPressed: () async {
+                                await launchUrl(
+                                  Uri.parse(widget.url),
+                                  mode: LaunchMode.externalApplication,
+                                );
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.share,
+                                color: Colors.white,
+                              ),
+                              onPressed: () {},
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _VideoFullscreen extends StatefulWidget {
   final String url;
   final MessageType type;
-  const _VideoFullscreen({required this.url, required this.type});
+  final String? bucket;
+  const _VideoFullscreen({required this.url, required this.type, this.bucket});
   @override
   State<_VideoFullscreen> createState() => _VideoFullscreenState();
 }
@@ -1650,7 +2351,16 @@ class _VideoFullscreenState extends State<_VideoFullscreen> {
 
   Future<void> _init() async {
     final v = widget.url;
-    final u = await _resolveMediaUrl(v, widget.type);
+    String? u;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      u = _resolveMediaUrlOrNull(v, bucket: widget.bucket);
+      if (u != null && u.isNotEmpty) break;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    if (u == null || u.isEmpty) {
+      if (mounted) setState(() => _ready = true);
+      return;
+    }
     _ctl = VideoPlayerController.networkUrl(Uri.parse(u));
     await _ctl.initialize();
     _ctl.play();
@@ -1819,5 +2529,3 @@ class _FullscreenVideoControlsState extends State<_FullscreenVideoControls> {
     );
   }
 }
-
-

@@ -2,9 +2,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../models/message_model.dart';
 import '../../models/reply_target.dart';
 import '../../providers/user_providers.dart';
@@ -12,16 +14,29 @@ import '../../providers/chat_providers.dart';
 import '../../widgets/glass_dropdown.dart';
 import '../../widgets/input_field.dart';
 import '../../widgets/file_preview_widget.dart';
+import '../../widgets/video_viewer_screen.dart';
 import '../../widgets/reply_preview_bar.dart';
 import '../../widgets/swipe_to_reply.dart';
 import '../../widgets/message_interaction_overlay.dart';
 import '../../widgets/chat_typing_indicator.dart';
 import '../../services/firestore_service.dart';
 import '../../services/supabase_service.dart';
+import '../../services/storage_service.dart';
 import '../../services/typing_controller.dart';
 import '../../theme/theme.dart';
 import 'chat_contact_info_screen.dart';
 import 'forward_select_screen.dart';
+
+final Map<String, ImageProvider> _chatViewerProviders =
+    <String, ImageProvider>{};
+final Set<String> _chatViewerPrecache = <String>{};
+
+ImageProvider _chatViewerProvider(String url) {
+  return _chatViewerProviders.putIfAbsent(
+    url,
+    () => CachedNetworkImageProvider(url),
+  );
+}
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
   static const routeName = '/chat-detail';
@@ -484,6 +499,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
       case MessageType.audio:
         preview = 'Voice message';
         break;
+      case MessageType.poll:
+        preview = 'Poll';
+        break;
     }
     if (preview.isEmpty) preview = 'Message';
     return ReplyTarget(
@@ -563,6 +581,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
     String? localPath,
     String? thumbnailPath,
     int? durationMs,
+    String? caption,
+    bool? viewOnce,
+    Map<String, dynamic>? meta,
   }) async {
     final status = ref.read(dmBlockStatusProvider(widget.peerId));
     if (status.blockedEither) {
@@ -587,6 +608,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
           localPath: localPath,
           thumbnailPath: thumbnailPath,
           audioDurationMs: durationMs,
+          caption: caption,
+          viewOnce: viewOnce,
+          meta: meta,
           replyTo: reply?.toMap(),
         );
     await _touchLastRead(force: true);
@@ -603,6 +627,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
     }
     _lastReadWriteAt = now;
     await ref.read(chatServiceProvider).updateLastRead(widget.chatId);
+  }
+
+  Future<String> _resolveMediaTileUrl(String raw, MessageType type) async {
+    if (raw.contains('://')) {
+      return SupabaseService.instance.resolveUrl(directUrl: raw);
+    }
+    final bucket = (type == MessageType.audio)
+        ? StorageService().audioBucket
+        : StorageService().mediaBucket;
+    return SupabaseService.instance.resolveUrl(bucket: bucket, path: raw);
   }
 
   String? _firstUnreadIncomingMessageId({
@@ -1134,6 +1168,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
                                       return 'Document';
                                     case MessageType.text:
                                       return 'Pinned message';
+                                    case MessageType.poll:
+                                      return 'Poll';
                                   }
                                 }
 
@@ -1225,6 +1261,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
                                             ),
                                             child: _ConversationBlockView(
                                               block: b,
+                                              allMessages: filtered,
                                               myUid: me,
                                               isPinned: (id) =>
                                                   pinnedSet.contains(id),
@@ -1238,6 +1275,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
                                               onReply: (m) =>
                                                   _replyTarget.value =
                                                       _toReplyTarget(m),
+                                              resolveUrl: _resolveMediaTileUrl,
                                               messageKeys: _messageKeys,
                                               highlightId: _highlightId,
                                               selectedId: _selectedMessageId,
@@ -1347,6 +1385,17 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
                           InputField(
                             onSend: _sendText,
                             onSendMedia: _sendMedia,
+                            onSendPoll: (poll) async {
+                              await ref
+                                  .read(chatServiceProvider)
+                                  .sendPoll(
+                                    chatId: widget.chatId,
+                                    peerId: widget.peerId,
+                                    poll: poll,
+                                    replyTo: _replyTarget.value?.toMap(),
+                                  );
+                              _replyTarget.value = null;
+                            },
                             onTypingChanged: _onTypingChanged,
                             onTextChanged: _onTypingTextChanged,
                             onVoiceRecordingChanged: _onVoiceRecordingChanged,
@@ -1404,10 +1453,12 @@ List<_ConversationBlock> _groupIntoBlocks(List<MessageModel> list) {
 
 class _ConversationBlockView extends ConsumerWidget {
   final _ConversationBlock block;
+  final List<MessageModel> allMessages;
   final String myUid;
   final bool Function(String messageId) isPinned;
   final ValueChanged<MessageModel> onLongPress;
   final ValueChanged<MessageModel> onReply;
+  final Future<String> Function(String raw, MessageType type) resolveUrl;
   final Map<String, GlobalKey> messageKeys;
   final ValueListenable<String?> highlightId;
   final ValueListenable<String?> selectedId;
@@ -1419,10 +1470,12 @@ class _ConversationBlockView extends ConsumerWidget {
   final String? unreadBoundaryMessageId;
   const _ConversationBlockView({
     required this.block,
+    required this.allMessages,
     required this.myUid,
     required this.isPinned,
     required this.onLongPress,
     required this.onReply,
+    required this.resolveUrl,
     required this.messageKeys,
     required this.highlightId,
     required this.selectedId,
@@ -1472,6 +1525,8 @@ class _ConversationBlockView extends ConsumerWidget {
             isPinned: isPinned(block.messages[i].id),
             onLongPress: () => onLongPress(block.messages[i]),
             onReply: () => onReply(block.messages[i]),
+            allMessages: allMessages,
+            resolveUrl: resolveUrl,
             messageKey: messageKeys.putIfAbsent(
               block.messages[i].id,
               () => GlobalKey(),
@@ -1672,6 +1727,8 @@ class _BlockMessageView extends StatelessWidget {
   final bool isPinned;
   final VoidCallback onLongPress;
   final VoidCallback onReply;
+  final List<MessageModel> allMessages;
+  final Future<String> Function(String raw, MessageType type) resolveUrl;
   final GlobalKey messageKey;
   final ValueListenable<String?> highlightId;
   final ValueListenable<String?> selectedId;
@@ -1685,6 +1742,8 @@ class _BlockMessageView extends StatelessWidget {
     required this.isPinned,
     required this.onLongPress,
     required this.onReply,
+    required this.allMessages,
+    required this.resolveUrl,
     required this.messageKey,
     required this.highlightId,
     required this.selectedId,
@@ -1754,6 +1813,66 @@ class _BlockMessageView extends StatelessWidget {
         txt,
         style: TextStyle(fontSize: 14, height: 1.35, color: primaryText),
       );
+    } else if (message.messageType == MessageType.image) {
+      final images = allMessages
+          .where(
+            (m) =>
+                m.messageType == MessageType.image &&
+                (m.mediaUrl ?? '').isNotEmpty,
+          )
+          .toList();
+      final startIndex = images.indexWhere((m) => m.id == message.id);
+      final onOpen = (images.isEmpty)
+          ? null
+          : () {
+              final index = startIndex < 0 ? 0 : startIndex;
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => _ChatImageViewer(
+                    images: images,
+                    initialIndex: index,
+                    resolveUrl: resolveUrl,
+                  ),
+                ),
+              );
+            };
+      content = FilePreviewWidget(
+        message: message,
+        isMe: isMe,
+        onOpenOverride: onOpen,
+        heroTag: message.id,
+      );
+    } else if (message.messageType == MessageType.video) {
+      final videos = allMessages
+          .where(
+            (m) =>
+                m.messageType == MessageType.video &&
+                (m.mediaUrl ?? '').isNotEmpty,
+          )
+          .toList();
+      final startIndex = videos.indexWhere((m) => m.id == message.id);
+      final onOpen = (videos.isEmpty)
+          ? null
+          : () {
+              final index = startIndex < 0 ? 0 : startIndex;
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => VideoViewerScreen(
+                    videoUrls: videos.map((m) => m.mediaUrl!).toList(),
+                    thumbnailUrls: videos.map((m) => m.thumbnailUrl).toList(),
+                    initialIndex: index,
+                    heroTag: 'video_${message.id}',
+                    resolveUrl: (url) => resolveUrl(url, MessageType.video),
+                  ),
+                ),
+              );
+            };
+      content = FilePreviewWidget(
+        message: message,
+        isMe: isMe,
+        onOpenOverride: onOpen,
+        heroTag: 'video_${message.id}',
+      );
     } else {
       content = FilePreviewWidget(message: message, isMe: isMe);
     }
@@ -1816,7 +1935,7 @@ class _BlockMessageView extends StatelessWidget {
           : CrossAxisAlignment.start,
       children: [
         if (!message.isDeletedForAll) pinTag,
-        if (message.replyToMessageId != null) ...[
+        if (!message.isDeletedForAll && message.replyToMessageId != null) ...[
           Align(
             alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
             child: ConstrainedBox(
@@ -2131,6 +2250,301 @@ class _MessageMetaRow extends StatelessWidget {
     if (m.hasPendingWrites) return AppColors.timeTextLight;
     if (m.status == 3) return const Color(0xFF5865F2);
     return AppColors.timeTextLight;
+  }
+}
+
+class _ChatViewerRetryOverlay extends StatelessWidget {
+  final VoidCallback onRetry;
+  const _ChatViewerRetryOverlay({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.refresh, color: Colors.white70, size: 40),
+          const SizedBox(height: 10),
+          const Text('Tap to retry', style: TextStyle(color: Colors.white70)),
+          const SizedBox(height: 10),
+          ElevatedButton(
+            onPressed: onRetry,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white12,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatViewerImage extends StatefulWidget {
+  final String url;
+  final String heroTag;
+  const _ChatViewerImage({required this.url, required this.heroTag});
+
+  @override
+  State<_ChatViewerImage> createState() => _ChatViewerImageState();
+}
+
+class _ChatViewerImageState extends State<_ChatViewerImage> {
+  bool _ready = false;
+  bool _failed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = _chatViewerProvider(widget.url);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ImageFiltered(
+          imageFilter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Image(
+            image: provider,
+            fit: BoxFit.contain,
+            width: double.infinity,
+            height: double.infinity,
+            errorBuilder: (_, __, ___) =>
+                const ColoredBox(color: Colors.black54),
+          ),
+        ),
+        AnimatedOpacity(
+          opacity: _ready ? 1 : 0,
+          duration: const Duration(milliseconds: 250),
+          child: Hero(
+            tag: widget.heroTag,
+            child: InteractiveViewer(
+              minScale: 1,
+              maxScale: 4,
+              child: Image(
+                image: provider,
+                fit: BoxFit.contain,
+                width: double.infinity,
+                height: double.infinity,
+                frameBuilder: (context, child, frame, wasSync) {
+                  if (frame != null && !_ready) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _ready = true);
+                    });
+                  }
+                  return child;
+                },
+                errorBuilder: (_, __, ___) {
+                  if (!_failed) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _failed = true);
+                    });
+                  }
+                  return const ColoredBox(color: Colors.black54);
+                },
+              ),
+            ),
+          ),
+        ),
+        if (_failed)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() {
+                _failed = false;
+                _ready = false;
+              }),
+              child: _ChatViewerRetryOverlay(
+                onRetry: () => setState(() {
+                  _failed = false;
+                  _ready = false;
+                }),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ChatImageViewer extends StatefulWidget {
+  final List<MessageModel> images;
+  final int initialIndex;
+  final Future<String> Function(String raw, MessageType type) resolveUrl;
+  const _ChatImageViewer({
+    required this.images,
+    required this.initialIndex,
+    required this.resolveUrl,
+  });
+
+  @override
+  State<_ChatImageViewer> createState() => _ChatImageViewerState();
+}
+
+class _ChatImageViewerState extends State<_ChatImageViewer> {
+  late final PageController _pc;
+  int _currentIndex = 0;
+  bool _showUi = true;
+  double _dragDy = 0;
+  int _retryNonce = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pc = PageController(initialPage: widget.initialIndex);
+    _currentIndex = widget.initialIndex;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _precacheAround(_currentIndex);
+    });
+  }
+
+  @override
+  void dispose() {
+    _pc.dispose();
+    super.dispose();
+  }
+
+  void _precacheAround(int index) {
+    for (final i in [index - 1, index, index + 1]) {
+      if (i < 0 || i >= widget.images.length) continue;
+      final m = widget.images[i];
+      final raw = m.mediaUrl ?? '';
+      if (raw.isEmpty) continue;
+      widget
+          .resolveUrl(raw, m.messageType)
+          .then((u) {
+            if (u.isEmpty || !mounted || !_chatViewerPrecache.add(u)) return;
+            unawaited(
+              precacheImage(_chatViewerProvider(u), context).catchError((_) {}),
+            );
+          })
+          .catchError((_) {});
+    }
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails d) {
+    setState(() => _dragDy += d.delta.dy);
+  }
+
+  void _onVerticalDragEnd(DragEndDetails d) {
+    final v = d.velocity.pixelsPerSecond.dy.abs();
+    final dy = _dragDy.abs();
+    if (dy > 120 || v > 900) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() => _dragDy = 0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: () => setState(() => _showUi = !_showUi),
+        onVerticalDragUpdate: _onVerticalDragUpdate,
+        onVerticalDragEnd: _onVerticalDragEnd,
+        child: Stack(
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              color: Colors.black.withOpacity(
+                (1.0 - (_dragDy.abs() / 280).clamp(0.0, 0.6)),
+              ),
+            ),
+            Transform.translate(
+              offset: Offset(0, _dragDy),
+              child: PageView.builder(
+                controller: _pc,
+                itemCount: widget.images.length,
+                onPageChanged: (i) {
+                  setState(() => _currentIndex = i);
+                  _precacheAround(i);
+                },
+                itemBuilder: (context, i) {
+                  final m = widget.images[i];
+                  final raw = m.mediaUrl ?? '';
+                  return FutureBuilder<String>(
+                    key: ValueKey('${m.id}_$_retryNonce'),
+                    future: widget.resolveUrl(raw, m.messageType),
+                    builder: (context, snap) {
+                      final resolved = snap.data ?? '';
+                      if (resolved.isEmpty) {
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            const ColoredBox(color: Colors.black54),
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => setState(() => _retryNonce++),
+                              child: _ChatViewerRetryOverlay(
+                                onRetry: () => setState(() => _retryNonce++),
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+                      return Center(
+                        child: _ChatViewerImage(url: resolved, heroTag: m.id),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedOpacity(
+                opacity: _showUi ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.arrow_back,
+                            color: Colors.white,
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                        Text(
+                          '${_currentIndex + 1}/${widget.images.length}',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.download,
+                                color: Colors.white,
+                              ),
+                              onPressed: () {},
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.share,
+                                color: Colors.white,
+                              ),
+                              onPressed: () {},
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

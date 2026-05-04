@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/message_model.dart';
+import '../services/media_resolver.dart';
 import '../theme/theme.dart';
 
 class AsyncMediaLoader {
@@ -10,39 +10,19 @@ class AsyncMediaLoader {
   /// - Full HTTP(S) URLs (returned as-is)
   /// - sb://bucket/path format
   /// - bucket/path format (e.g., chatMedia/chatId/...)
-  static Future<String?> resolveUrl(String? rawUrl, MessageType type) async {
+  /// - Uses explicit bucket from MessageModel if available
+  static Future<String?> resolveUrl(
+    String? rawUrl,
+    MessageType type, {
+    String? bucket,
+  }) async {
     if (rawUrl == null || rawUrl.isEmpty) return null;
 
     try {
-      // Already a full URL - return as-is
-      if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
-        return rawUrl;
-      }
-
-      String bucket;
-      String path;
-
-      // Parse sb://bucket/path format
-      if (rawUrl.startsWith('sb://')) {
-        final s = rawUrl.substring(5);
-        final i = s.indexOf('/');
-        if (i > 0) {
-          bucket = s.substring(0, i);
-          path = s.substring(i + 1);
-        } else {
-          return null;
-        }
-      } else if (rawUrl.contains('/')) {
-        // bucket/path format
-        final i = rawUrl.indexOf('/');
-        bucket = rawUrl.substring(0, i);
-        path = rawUrl.substring(i + 1);
-      } else {
-        return null;
-      }
-
-      // Return stable public URL (never expires)
-      return Supabase.instance.client.storage.from(bucket).getPublicUrl(path);
+      final resolved = MediaResolver.resolve(rawUrl, bucket: bucket);
+      if (resolved == null || resolved.isEmpty) return null;
+      if (!resolved.contains('/storage/v1/object/public/')) return null;
+      return resolved;
     } catch (e) {
       return null;
     }
@@ -79,21 +59,66 @@ class AsyncMediaWidget extends StatefulWidget {
 class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
   String? _resolvedUrl;
   bool _isLoading = true;
+  bool _failed = false;
+  Timer? _timeoutTimer;
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _startLoadWithTimeout();
+    });
+  }
+
+  void _startLoadWithTimeout() {
+    // Start the actual load
     _loadMedia();
+    _startLoadingTimer();
+  }
+
+  void _startLoadingTimer() {
+    // Set a 8-second max timeout to prevent infinite loading
+    _timeoutTimer?.cancel();
+    _timeoutTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted && _isLoading) {
+        setState(() {
+          _isLoading = false;
+          _failed = true;
+          _resolvedUrl = null;
+        });
+      }
+    });
   }
 
   Future<void> _loadMedia() async {
     if (!mounted) return;
 
+    // Avoid resolving/painting a URL while the upload is still in progress.
+    // This prevents transient 400s when the object isn't available yet.
+    if (widget.message.uploadStatus == 'uploading') {
+      if (mounted) {
+        setState(() {
+          _isLoading = true;
+          _resolvedUrl = null;
+        });
+      }
+      return;
+    }
+
     // Check both mediaUrl and mediaPath (mediaPath stores bucket/path)
-    final rawUrl = (widget.message.mediaUrl?.isNotEmpty == true)
-        ? widget.message.mediaUrl!
+    final rawUrl = (widget.message.storagePath?.isNotEmpty == true)
+        ? widget.message.storagePath!
         : (widget.message.mediaPath?.isNotEmpty == true)
         ? widget.message.mediaPath!
+        : (widget.message.mediaUrl?.isNotEmpty == true)
+        ? widget.message.mediaUrl!
         : '';
 
     if (rawUrl.isEmpty) {
@@ -106,18 +131,35 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
       return;
     }
 
-    setState(() => _isLoading = true);
-
-    final resolved = await AsyncMediaLoader.resolveUrl(
-      rawUrl,
-      widget.message.messageType,
-    );
-
     if (mounted) {
-      setState(() {
-        _isLoading = false;
-        _resolvedUrl = resolved;
-      });
+      setState(() => _isLoading = true);
+    }
+
+    String? resolved;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      resolved = await AsyncMediaLoader.resolveUrl(
+        rawUrl,
+        widget.message.messageType,
+        bucket: widget.message.bucket,
+      );
+      if (resolved != null && resolved.isNotEmpty) break;
+      await Future<void>.delayed(const Duration(milliseconds: 220));
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      _resolvedUrl = resolved;
+      _failed = resolved == null || resolved.isEmpty;
+    });
+
+    if (resolved != null &&
+        resolved.isNotEmpty &&
+        resolved.startsWith('https://') &&
+        widget.message.messageType == MessageType.image) {
+      try {
+        await precacheImage(NetworkImage(resolved), context);
+      } catch (_) {}
     }
   }
 
@@ -125,6 +167,10 @@ class _AsyncMediaWidgetState extends State<AsyncMediaWidget> {
   Widget build(BuildContext context) {
     if (_isLoading) {
       return widget.placeholder;
+    }
+
+    if (_failed) {
+      return widget.child ?? widget.placeholder;
     }
 
     if (_resolvedUrl == null || _resolvedUrl!.isEmpty) {

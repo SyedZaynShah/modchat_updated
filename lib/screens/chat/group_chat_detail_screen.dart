@@ -6,14 +6,18 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../models/message_model.dart';
 import '../../models/reply_target.dart';
 import '../../providers/chat_providers.dart';
 import '../../providers/user_providers.dart';
 import '../../services/firestore_service.dart';
+import '../../services/supabase_service.dart';
+import '../../services/storage_service.dart';
 import '../group/group_settings_screen.dart';
 import '../../widgets/group_message_bubble.dart';
+import '../../widgets/video_viewer_screen.dart';
 import '../../widgets/input_field.dart';
 import '../../widgets/reply_preview_bar.dart';
 import '../../widgets/swipe_to_reply.dart';
@@ -21,6 +25,17 @@ import '../../widgets/message_interaction_overlay.dart';
 import '../../widgets/chat_typing_indicator.dart';
 import '../../services/typing_controller.dart';
 import 'forward_select_screen.dart';
+
+final Map<String, ImageProvider> _groupViewerProviders =
+    <String, ImageProvider>{};
+final Set<String> _groupViewerPrecache = <String>{};
+
+ImageProvider _groupViewerProvider(String url) {
+  return _groupViewerProviders.putIfAbsent(
+    url,
+    () => CachedNetworkImageProvider(url),
+  );
+}
 
 class GroupChatDetailScreen extends ConsumerStatefulWidget {
   static const routeName = '/group-chat-detail';
@@ -606,6 +621,9 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
       case MessageType.audio:
         preview = 'Voice message';
         break;
+      case MessageType.poll:
+        preview = 'Poll';
+        break;
     }
     if (preview.isEmpty) preview = 'Message';
     return ReplyTarget(
@@ -835,6 +853,16 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
       if (!isNearBottom) return;
       _scrollController.jumpTo(0);
     });
+  }
+
+  Future<String> _resolveMediaTileUrl(String raw, MessageType type) async {
+    if (raw.contains('://')) {
+      return SupabaseService.instance.resolveUrl(directUrl: raw);
+    }
+    final bucket = (type == MessageType.audio)
+        ? StorageService().audioBucket
+        : StorageService().mediaBucket;
+    return SupabaseService.instance.resolveUrl(bucket: bucket, path: raw);
   }
 
   void _forceScrollToBottom() {
@@ -1134,6 +1162,9 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                 String? localPath,
                 String? thumbnailPath,
                 int? durationMs,
+                String? caption,
+                bool? viewOnce,
+                Map<String, dynamic>? meta,
               }) async {
                 if (!memberExists) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -1204,6 +1235,9 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                         localPath: localPath,
                         thumbnailPath: thumbnailPath,
                         audioDurationMs: durationMs,
+                        caption: caption,
+                        viewOnce: viewOnce,
+                        meta: meta,
                         replyTo: reply?.toMap(),
                       );
                   await _touchLastRead(force: true);
@@ -1396,6 +1430,8 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                                             return 'Document';
                                           case MessageType.text:
                                             return 'Pinned message';
+                                          case MessageType.poll:
+                                            return 'Poll';
                                         }
                                       }
 
@@ -1508,6 +1544,107 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                                                   final isMe = m.senderId == me;
                                                   final showUnreadDivider =
                                                       m.id == unreadBoundaryId;
+
+                                                  final images = display
+                                                      .where(
+                                                        (x) =>
+                                                            x.messageType ==
+                                                                MessageType
+                                                                    .image &&
+                                                            (x.mediaUrl ?? '')
+                                                                .isNotEmpty,
+                                                      )
+                                                      .toList();
+                                                  final startIndex = images
+                                                      .indexWhere(
+                                                        (x) => x.id == m.id,
+                                                      );
+                                                  final onOpenImage =
+                                                      (m.messageType ==
+                                                              MessageType
+                                                                  .image &&
+                                                          images.isNotEmpty)
+                                                      ? () {
+                                                          final idx =
+                                                              startIndex < 0
+                                                              ? 0
+                                                              : startIndex;
+                                                          Navigator.of(
+                                                            context,
+                                                          ).push(
+                                                            MaterialPageRoute(
+                                                              builder: (_) =>
+                                                                  _GroupImageViewer(
+                                                                    images:
+                                                                        images,
+                                                                    initialIndex:
+                                                                        idx,
+                                                                    resolveUrl:
+                                                                        _resolveMediaTileUrl,
+                                                                  ),
+                                                            ),
+                                                          );
+                                                        }
+                                                      : null;
+
+                                                  // Video viewer setup
+                                                  final videos = display
+                                                      .where(
+                                                        (x) =>
+                                                            x.messageType ==
+                                                                MessageType
+                                                                    .video &&
+                                                            (x.mediaUrl ?? '')
+                                                                .isNotEmpty,
+                                                      )
+                                                      .toList();
+                                                  final videoStartIndex = videos
+                                                      .indexWhere(
+                                                        (x) => x.id == m.id,
+                                                      );
+                                                  final onOpenVideo =
+                                                      (m.messageType ==
+                                                              MessageType
+                                                                  .video &&
+                                                          videos.isNotEmpty)
+                                                      ? () {
+                                                          final idx =
+                                                              videoStartIndex <
+                                                                  0
+                                                              ? 0
+                                                              : videoStartIndex;
+                                                          Navigator.of(
+                                                            context,
+                                                          ).push(
+                                                            MaterialPageRoute(
+                                                              builder: (_) => VideoViewerScreen(
+                                                                videoUrls: videos
+                                                                    .map(
+                                                                      (x) => x
+                                                                          .mediaUrl!,
+                                                                    )
+                                                                    .toList(),
+                                                                thumbnailUrls: videos
+                                                                    .map(
+                                                                      (x) => x
+                                                                          .thumbnailUrl,
+                                                                    )
+                                                                    .toList(),
+                                                                initialIndex:
+                                                                    idx,
+                                                                heroTag:
+                                                                    'video_${m.id}',
+                                                                resolveUrl: (url) =>
+                                                                    _resolveMediaTileUrl(
+                                                                      url,
+                                                                      MessageType
+                                                                          .video,
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                          );
+                                                        }
+                                                      : null;
 
                                                   final older =
                                                       index + 1 < display.length
@@ -1720,6 +1857,16 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                                                                                             isPinned: pinnedSet.contains(
                                                                                               m.id,
                                                                                             ),
+                                                                                            onOpenOverride:
+                                                                                                m.messageType ==
+                                                                                                    MessageType.video
+                                                                                                ? onOpenVideo
+                                                                                                : onOpenImage,
+                                                                                            heroTag:
+                                                                                                m.messageType ==
+                                                                                                    MessageType.video
+                                                                                                ? 'video_${m.id}'
+                                                                                                : m.id,
                                                                                             onOpenThread:
                                                                                                 (
                                                                                                   messageId,
@@ -1910,6 +2057,18 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                                         InputField(
                                           onSend: sendText,
                                           onSendMedia: sendMedia,
+                                          onSendPoll: (poll) async {
+                                            await ref
+                                                .read(chatServiceProvider)
+                                                .sendGroupPoll(
+                                                  chatId: widget.chatId,
+                                                  memberIds: members,
+                                                  poll: poll,
+                                                  replyTo: _replyTarget.value
+                                                      ?.toMap(),
+                                                );
+                                            _replyTarget.value = null;
+                                          },
                                           onTypingChanged: _onTypingChanged,
                                           onTextChanged: _onTypingTextChanged,
                                           onVoiceRecordingChanged:
@@ -1932,6 +2091,304 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
             },
           );
         },
+      ),
+    );
+  }
+}
+
+class _GroupViewerRetryOverlay extends StatelessWidget {
+  final VoidCallback onRetry;
+  const _GroupViewerRetryOverlay({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.refresh, color: Colors.white70, size: 40),
+          const SizedBox(height: 10),
+          const Text('Tap to retry', style: TextStyle(color: Colors.white70)),
+          const SizedBox(height: 10),
+          ElevatedButton(
+            onPressed: onRetry,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white12,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GroupViewerImage extends StatefulWidget {
+  final String url;
+  final String heroTag;
+  const _GroupViewerImage({required this.url, required this.heroTag});
+
+  @override
+  State<_GroupViewerImage> createState() => _GroupViewerImageState();
+}
+
+class _GroupViewerImageState extends State<_GroupViewerImage> {
+  bool _ready = false;
+  bool _failed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = _groupViewerProvider(widget.url);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ImageFiltered(
+          imageFilter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Image(
+            image: provider,
+            fit: BoxFit.contain,
+            width: double.infinity,
+            height: double.infinity,
+            errorBuilder: (_, __, ___) =>
+                const ColoredBox(color: Colors.black54),
+          ),
+        ),
+        AnimatedOpacity(
+          opacity: _ready ? 1 : 0,
+          duration: const Duration(milliseconds: 250),
+          child: Hero(
+            tag: widget.heroTag,
+            child: InteractiveViewer(
+              minScale: 1,
+              maxScale: 4,
+              child: Image(
+                image: provider,
+                fit: BoxFit.contain,
+                width: double.infinity,
+                height: double.infinity,
+                frameBuilder: (context, child, frame, wasSync) {
+                  if (frame != null && !_ready) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _ready = true);
+                    });
+                  }
+                  return child;
+                },
+                errorBuilder: (_, __, ___) {
+                  if (!_failed) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _failed = true);
+                    });
+                  }
+                  return const ColoredBox(color: Colors.black54);
+                },
+              ),
+            ),
+          ),
+        ),
+        if (_failed)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() {
+                _failed = false;
+                _ready = false;
+              }),
+              child: _GroupViewerRetryOverlay(
+                onRetry: () => setState(() {
+                  _failed = false;
+                  _ready = false;
+                }),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _GroupImageViewer extends StatefulWidget {
+  final List<MessageModel> images;
+  final int initialIndex;
+  final Future<String> Function(String raw, MessageType type) resolveUrl;
+  const _GroupImageViewer({
+    required this.images,
+    required this.initialIndex,
+    required this.resolveUrl,
+  });
+
+  @override
+  State<_GroupImageViewer> createState() => _GroupImageViewerState();
+}
+
+class _GroupImageViewerState extends State<_GroupImageViewer> {
+  late final PageController _pc;
+  int _currentIndex = 0;
+  bool _showUi = true;
+  double _dragDy = 0;
+  int _retryNonce = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pc = PageController(initialPage: widget.initialIndex);
+    _currentIndex = widget.initialIndex;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _precacheAround(_currentIndex);
+    });
+  }
+
+  @override
+  void dispose() {
+    _pc.dispose();
+    super.dispose();
+  }
+
+  void _precacheAround(int index) {
+    for (final i in [index - 1, index, index + 1]) {
+      if (i < 0 || i >= widget.images.length) continue;
+      final m = widget.images[i];
+      final raw = m.mediaUrl ?? '';
+      if (raw.isEmpty) continue;
+      widget
+          .resolveUrl(raw, m.messageType)
+          .then((u) {
+            if (u.isEmpty || !mounted || !_groupViewerPrecache.add(u)) return;
+            unawaited(
+              precacheImage(
+                _groupViewerProvider(u),
+                context,
+              ).catchError((_) {}),
+            );
+          })
+          .catchError((_) {});
+    }
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails d) {
+    setState(() => _dragDy += d.delta.dy);
+  }
+
+  void _onVerticalDragEnd(DragEndDetails d) {
+    final v = d.velocity.pixelsPerSecond.dy.abs();
+    final dy = _dragDy.abs();
+    if (dy > 120 || v > 900) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() => _dragDy = 0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: () => setState(() => _showUi = !_showUi),
+        onVerticalDragUpdate: _onVerticalDragUpdate,
+        onVerticalDragEnd: _onVerticalDragEnd,
+        child: Stack(
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              color: Colors.black.withOpacity(
+                (1.0 - (_dragDy.abs() / 280).clamp(0.0, 0.6)),
+              ),
+            ),
+            Transform.translate(
+              offset: Offset(0, _dragDy),
+              child: PageView.builder(
+                controller: _pc,
+                itemCount: widget.images.length,
+                onPageChanged: (i) {
+                  setState(() => _currentIndex = i);
+                  _precacheAround(i);
+                },
+                itemBuilder: (context, i) {
+                  final m = widget.images[i];
+                  final raw = m.mediaUrl ?? '';
+                  return FutureBuilder<String>(
+                    key: ValueKey('${m.id}_$_retryNonce'),
+                    future: widget.resolveUrl(raw, m.messageType),
+                    builder: (context, snap) {
+                      final resolved = snap.data ?? '';
+                      if (resolved.isEmpty) {
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            const ColoredBox(color: Colors.black54),
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => setState(() => _retryNonce++),
+                              child: _GroupViewerRetryOverlay(
+                                onRetry: () => setState(() => _retryNonce++),
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+                      return Center(
+                        child: _GroupViewerImage(url: resolved, heroTag: m.id),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedOpacity(
+                opacity: _showUi ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.arrow_back,
+                            color: Colors.white,
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                        Text(
+                          '${_currentIndex + 1}/${widget.images.length}',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.download,
+                                color: Colors.white,
+                              ),
+                              onPressed: () {},
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.share,
+                                color: Colors.white,
+                              ),
+                              onPressed: () {},
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
