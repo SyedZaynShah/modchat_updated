@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../models/message_model.dart';
 import '../../providers/chat_providers.dart';
@@ -322,6 +323,39 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Invite link copied')));
+  }
+
+  Future<void> _shareInviteLink({
+    required Map<String, dynamic> groupData,
+    required String inviteLink,
+  }) async {
+    if (inviteLink.trim().isEmpty) return;
+    final canInvite = await _canManageInvites(groupData);
+    if (!canInvite) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Invite link'),
+          content: const Text('You do not have permission to manage invites'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    await Share.share(inviteLink);
+  }
+
+  String _buildInviteLink(String code) {
+    final c = code.trim();
+    if (c.isEmpty) return '';
+    return 'https://modchat.app/join?groupId=$c';
   }
 
   Future<void> _showInviteQr({
@@ -1080,8 +1114,8 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
             if (_descCtrl.text.isEmpty) _descCtrl.text = description;
 
             final inviteLink = (code == null || code.isEmpty || revoked)
-                ? null
-                : 'https://yourapp.com/join/$code';
+              ? null
+              : _buildInviteLink(code);
 
             Future<void> handleMenu(String v) async {
               if (v == 'edit_name') {
@@ -1791,6 +1825,12 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
                                 onCopy: inviteLink == null
                                     ? null
                                     : () => _copyInviteLink(
+                                        groupData: data,
+                                        inviteLink: inviteLink,
+                                      ),
+                                onShare: inviteLink == null
+                                    ? null
+                                    : () => _shareInviteLink(
                                         groupData: data,
                                         inviteLink: inviteLink,
                                       ),
@@ -3426,6 +3466,7 @@ class _InviteLinkCard extends StatelessWidget {
   final bool isBusy;
   final VoidCallback? onShowQr;
   final VoidCallback? onCopy;
+  final VoidCallback? onShare;
   final VoidCallback onRotate;
   final VoidCallback onRevoke;
   const _InviteLinkCard({
@@ -3433,6 +3474,7 @@ class _InviteLinkCard extends StatelessWidget {
     required this.isBusy,
     required this.onShowQr,
     required this.onCopy,
+    required this.onShare,
     required this.onRotate,
     required this.onRevoke,
   });
@@ -3441,6 +3483,7 @@ class _InviteLinkCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isLight = Theme.of(context).brightness == Brightness.light;
     final theme = Theme.of(context);
+    final linkText = inviteLink ?? 'No invite link generated';
     return Container(
       padding: const EdgeInsets.all(12),
       margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
@@ -3454,104 +3497,147 @@ class _InviteLinkCard extends StatelessWidget {
           width: 1,
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Text(
+            'Invite Link',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: isLight ? theme.colorScheme.onSurface : Colors.white,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: isLight
+                  ? const Color(0xFFF3F4F6)
+                  : const Color(0xFF141414),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isLight
+                    ? const Color(0xFFE5E7EB)
+                    : const Color(0xFF1F1F1F),
+                width: 1,
+              ),
+            ),
+            child: Row(
               children: [
-                Text(
-                  'Invite Link',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isLight ? theme.colorScheme.onSurface : Colors.white,
-                  ),
+                Icon(
+                  Icons.link,
+                  size: 16,
+                  color: isLight
+                      ? theme.colorScheme.onSurface.withOpacity(0.5)
+                      : const Color(0xFF8A8A8A),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  inviteLink ?? 'No invite link generated',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isLight
-                        ? theme.colorScheme.onSurface.withOpacity(0.6)
-                        : const Color(0xFFA5A5A5),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    linkText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isLight
+                          ? theme.colorScheme.onSurface.withOpacity(0.6)
+                          : const Color(0xFFA5A5A5),
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 10),
-          IconButton(
-            onPressed: onCopy,
-            icon: Icon(
-              Icons.copy,
-              size: 18,
-              color: isLight
-                  ? theme.colorScheme.onSurface.withOpacity(0.7)
-                  : const Color(0xFFA0A0A0),
-            ),
-            tooltip: 'Copy',
-          ),
-          IconButton(
-            onPressed: onShowQr,
-            icon: Icon(
-              Icons.qr_code_2,
-              size: 18,
-              color: isLight
-                  ? theme.colorScheme.onSurface.withOpacity(0.7)
-                  : const Color(0xFFA0A0A0),
-            ),
-            tooltip: 'QR',
-          ),
-          const SizedBox(width: 2),
-          OutlinedButton(
-            onPressed: isBusy ? null : onRotate,
-            style: OutlinedButton.styleFrom(
-              side: BorderSide(
-                color: isLight
-                    ? Colors.black.withOpacity(0.05)
-                    : const Color(0xFF1A1A1A),
-              ),
-              foregroundColor: isLight
-                  ? theme.colorScheme.primary
-                  : Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: Text(
-              isBusy
-                  ? 'Generating...'
-                  : (inviteLink == null ? 'Generate' : 'Generate new'),
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-            ),
-          ),
-          if (inviteLink != null) ...[
-            const SizedBox(width: 8),
-            OutlinedButton(
-              onPressed: isBusy ? null : onRevoke,
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: Colors.redAccent.withOpacity(0.35)),
-                backgroundColor: Colors.redAccent.withOpacity(0.1),
-                foregroundColor: Colors.redAccent,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 10,
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              IconButton(
+                onPressed: onCopy,
+                icon: Icon(
+                  Icons.copy,
+                  size: 18,
+                  color: isLight
+                      ? theme.colorScheme.onSurface.withOpacity(0.7)
+                      : const Color(0xFFA0A0A0),
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+                tooltip: 'Copy',
+              ),
+              IconButton(
+                onPressed: onShare,
+                icon: Icon(
+                  Icons.share_outlined,
+                  size: 18,
+                  color: isLight
+                      ? theme.colorScheme.onSurface.withOpacity(0.7)
+                      : const Color(0xFFA0A0A0),
+                ),
+                tooltip: 'Share',
+              ),
+              IconButton(
+                onPressed: onShowQr,
+                icon: Icon(
+                  Icons.qr_code_2,
+                  size: 18,
+                  color: isLight
+                      ? theme.colorScheme.onSurface.withOpacity(0.7)
+                      : const Color(0xFFA0A0A0),
+                ),
+                tooltip: 'QR',
+              ),
+              OutlinedButton(
+                onPressed: isBusy ? null : onRotate,
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(
+                    color: isLight
+                        ? Colors.black.withOpacity(0.05)
+                        : const Color(0xFF1A1A1A),
+                  ),
+                  foregroundColor: isLight
+                      ? theme.colorScheme.primary
+                      : Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text(
+                  isBusy
+                      ? 'Generating...'
+                      : (inviteLink == null ? 'Generate' : 'Generate new'),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-              child: const Text(
-                'Revoke',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
+              if (inviteLink != null)
+                OutlinedButton(
+                  onPressed: isBusy ? null : onRevoke,
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.redAccent.withOpacity(0.35)),
+                    backgroundColor: Colors.redAccent.withOpacity(0.1),
+                    foregroundColor: Colors.redAccent,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text(
+                    'Revoke',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
     );

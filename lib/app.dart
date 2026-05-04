@@ -52,21 +52,40 @@ class _AppState extends ConsumerState<App> {
     }, onError: (_) {});
   }
 
-  void _handleIncomingUri(Uri uri) {
+  String? _extractInviteCode(Uri uri) {
     try {
+      final qp = uri.queryParameters;
+      final qpCode = (qp['groupId'] ?? qp['code'])?.trim();
+      if (qpCode != null && qpCode.isNotEmpty) return qpCode;
+
       final segs = uri.pathSegments;
+      if (uri.scheme == 'modchat' && uri.host == 'group') {
+        if (segs.isNotEmpty && segs.first.trim().isNotEmpty) {
+          return segs.first.trim();
+        }
+      }
+
       if (segs.length >= 2 && segs[0] == 'join') {
         final code = segs[1].trim();
-        if (code.isEmpty) return;
-
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _navKey.currentState?.pushNamed(
-            JoinGroupScreen.routeName,
-            arguments: {'inviteCode': code},
-          );
-        });
+        return code.isEmpty ? null : code;
+      }
+      if (segs.length >= 2 && segs[0] == 'group') {
+        final code = segs[1].trim();
+        return code.isEmpty ? null : code;
       }
     } catch (_) {}
+    return null;
+  }
+
+  void _handleIncomingUri(Uri uri) {
+    final code = _extractInviteCode(uri);
+    if (code == null || code.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _navKey.currentState?.pushNamed(
+        JoinGroupScreen.routeName,
+        arguments: {'inviteCode': code},
+      );
+    });
   }
 
   @override

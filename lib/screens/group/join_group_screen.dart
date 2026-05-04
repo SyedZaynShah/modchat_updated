@@ -20,6 +20,7 @@ class JoinGroupScreen extends ConsumerStatefulWidget {
 class _JoinGroupScreenState extends ConsumerState<JoinGroupScreen> {
   final _codeCtrl = TextEditingController();
   bool _joining = false;
+  bool _autoJoinAttempted = false;
 
   @override
   void initState() {
@@ -27,6 +28,12 @@ class _JoinGroupScreenState extends ConsumerState<JoinGroupScreen> {
     final initial = (widget.inviteCode ?? '').trim();
     if (initial.isNotEmpty) {
       _codeCtrl.text = initial;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_autoJoinAttempted) {
+          _autoJoinAttempted = true;
+          _join();
+        }
+      });
     }
   }
 
@@ -50,8 +57,20 @@ class _JoinGroupScreenState extends ConsumerState<JoinGroupScreen> {
     try {
       final uri = Uri.tryParse(text);
       if (uri == null) return null;
+      final qp = uri.queryParameters;
+      final qpCode = (qp['groupId'] ?? qp['code'])?.trim();
+      if (qpCode != null && qpCode.isNotEmpty) return qpCode;
       final segs = uri.pathSegments;
+      if (uri.scheme == 'modchat' && uri.host == 'group') {
+        if (segs.isNotEmpty && segs.first.trim().isNotEmpty) {
+          return segs.first.trim();
+        }
+      }
       if (segs.length >= 2 && segs[0] == 'join') {
+        final code = segs[1].trim();
+        return code.isEmpty ? null : code;
+      }
+      if (segs.length >= 2 && segs[0] == 'group') {
         final code = segs[1].trim();
         return code.isEmpty ? null : code;
       }
