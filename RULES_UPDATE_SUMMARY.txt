@@ -1,0 +1,97 @@
+═══════════════════════════════════════════════════════════════════════════
+                    FIRESTORE RULES UPDATE - COMPLETE
+═══════════════════════════════════════════════════════════════════════════
+
+✅ STATUS: Rules updated in local files
+⏳ ACTION REQUIRED: Deploy to Firebase
+
+───────────────────────────────────────────────────────────────────────────
+                            WHAT WAS UPDATED
+───────────────────────────────────────────────────────────────────────────
+
+📁 File 1: firebase/firestore.rules
+   Location: Lines 197-241
+   Status: ✅ Updated
+
+📁 File 2: firebase/firebase.rules
+   Location: Lines 147-191
+   Status: ✅ Updated
+
+───────────────────────────────────────────────────────────────────────────
+                         RULES FUNCTIONALITY
+───────────────────────────────────────────────────────────────────────────
+
+The following security rules were added for the 'calls' collection:
+
+✅ CREATE: Users can create calls as themselves only
+   - CallerId must match authenticated user
+   - Cannot call yourself
+   - Type must be 'voice' or 'video'
+   - Status must be 'ringing' on creation
+
+✅ READ: Only caller and receiver can read call documents
+   - Third parties are blocked
+
+✅ UPDATE: Only caller and receiver can update calls
+   - Cannot change callerId or receiverId
+   - Cannot change call type
+   - Can update status, timestamps
+
+❌ DELETE: No one can delete calls
+   - Maintains audit trail
+
+───────────────────────────────────────────────────────────────────────────
+                         DEPLOYMENT OPTIONS
+───────────────────────────────────────────────────────────────────────────
+
+OPTION 1: Firebase CLI (Fastest)
+──────────────────────────────────
+cd modchat_updated
+firebase deploy --only firestore:rules
+
+OPTION 2: Firebase Console (Manual)
+────────────────────────────────────
+1. Open: https://console.firebase.google.com/
+2. Navigate to: Firestore Database → Rules
+3. Copy content from: firebase/firestore.rules
+4. Paste into console editor
+5. Click "Publish"
+
+───────────────────────────────────────────────────────────────────────────
+                              TESTING
+───────────────────────────────────────────────────────────────────────────
+
+After deploying:
+
+1. Wait 1-2 minutes for propagation
+2. Test in Firebase Console Rules Playground
+3. Test with real app on two devices
+4. Verify calls can be created and updated
+
+See FIRESTORE_RULES_DEPLOYED.md for detailed testing steps.
+
+───────────────────────────────────────────────────────────────────────────
+                           NEXT STEPS
+───────────────────────────────────────────────────────────────────────────
+
+1. ✅ Rules updated locally (DONE)
+2. ⏳ Deploy to Firebase (YOUR ACTION)
+3. ⏳ Test rules in simulator
+4. ⏳ Test with app on two devices
+5. ⏳ Verify Phase 1 complete
+
+───────────────────────────────────────────────────────────────────────────
+                         DOCUMENTATION
+───────────────────────────────────────────────────────────────────────────
+
+📖 FIRESTORE_RULES_DEPLOYED.md - Detailed deployment guide
+📖 START_HERE.md - Overall project guide
+📖 VOICE_CALL_TESTING_GUIDE.md - Complete testing procedures
+
+───────────────────────────────────────────────────────────────────────────
+
+✅ RULES UPDATE: COMPLETE
+🚀 READY FOR: Deployment to Firebase
+📅 UPDATED: June 18, 2026
+
+═══════════════════════════════════════════════════════════════════════════

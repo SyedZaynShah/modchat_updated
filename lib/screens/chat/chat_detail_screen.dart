@@ -23,9 +23,12 @@ import '../../services/firestore_service.dart';
 import '../../services/supabase_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/typing_controller.dart';
+import '../../providers/call_providers.dart';
 import '../../theme/theme.dart';
 import 'chat_contact_info_screen.dart';
 import 'forward_select_screen.dart';
+import 'call_screen.dart';
+import 'video_call_screen.dart';
 
 final Map<String, ImageProvider> _chatViewerProviders =
     <String, ImageProvider>{};
@@ -557,20 +560,53 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
       );
       return;
     }
+    
+    final me = FirebaseAuth.instance.currentUser!.uid;
+    final optimisticService = ref.read(optimisticMessageServiceProvider);
+    
     _typingController.onSend(widget.chatId);
     final reply = _replyTarget.value;
     _replyTarget.value = null;
-    await ref
-        .read(chatServiceProvider)
-        .sendText(
-          chatId: widget.chatId,
-          peerId: widget.peerId,
-          text: text,
-          replyTo: reply?.toMap(),
+    
+    // Add optimistic message immediately for instant UI update
+    final tempId = optimisticService.addPendingTextMessage(
+      chatId: widget.chatId,
+      senderId: me,
+      receiverId: widget.peerId,
+      text: text,
+      replyTo: reply?.toMap(),
+    );
+    
+    // Scroll to bottom immediately to show the new message
+    _forceScrollToBottom();
+    
+    // Send to Firestore in background
+    try {
+      await ref
+          .read(chatServiceProvider)
+          .sendText(
+            chatId: widget.chatId,
+            peerId: widget.peerId,
+            text: text,
+            replyTo: reply?.toMap(),
+          );
+      
+      // Remove pending message after successful send
+      // (Firestore message will replace it)
+      await Future.delayed(const Duration(milliseconds: 500));
+      optimisticService.removePendingMessage(widget.chatId, tempId);
+    } catch (e) {
+      // Mark as failed if send fails
+      optimisticService.markAsFailed(widget.chatId, tempId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send message: $e')),
         );
+      }
+    }
+    
     await _touchLastRead(force: true);
     _cachedUnreadMessageId = null;
-    _forceScrollToBottom();
   }
 
   Future<void> _sendMedia(
@@ -593,29 +629,64 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
       );
       return;
     }
+    
+    final me = FirebaseAuth.instance.currentUser!.uid;
+    final optimisticService = ref.read(optimisticMessageServiceProvider);
+    
     _typingController.onSend(widget.chatId);
     final reply = _replyTarget.value;
     _replyTarget.value = null;
-    await ref
-        .read(chatServiceProvider)
-        .sendMedia(
-          chatId: widget.chatId,
-          peerId: widget.peerId,
-          bytes: bytes,
-          fileName: name,
-          contentType: contentType,
-          type: type,
-          localPath: localPath,
-          thumbnailPath: thumbnailPath,
-          audioDurationMs: durationMs,
-          caption: caption,
-          viewOnce: viewOnce,
-          meta: meta,
-          replyTo: reply?.toMap(),
+    
+    // Add optimistic media message immediately
+    final tempId = optimisticService.addPendingMediaMessage(
+      chatId: widget.chatId,
+      senderId: me,
+      receiverId: widget.peerId,
+      type: type,
+      caption: caption,
+      localPath: localPath,
+      replyTo: reply?.toMap(),
+      meta: meta,
+    );
+    
+    // Scroll to bottom immediately
+    _forceScrollToBottom();
+    
+    // Send to Firestore in background
+    try {
+      await ref
+          .read(chatServiceProvider)
+          .sendMedia(
+            chatId: widget.chatId,
+            peerId: widget.peerId,
+            bytes: bytes,
+            fileName: name,
+            contentType: contentType,
+            type: type,
+            localPath: localPath,
+            thumbnailPath: thumbnailPath,
+            audioDurationMs: durationMs,
+            caption: caption,
+            viewOnce: viewOnce,
+            meta: meta,
+            replyTo: reply?.toMap(),
+          );
+      
+      // Remove pending message after successful send
+      await Future.delayed(const Duration(milliseconds: 500));
+      optimisticService.removePendingMessage(widget.chatId, tempId);
+    } catch (e) {
+      // Mark as failed if send fails
+      optimisticService.markAsFailed(widget.chatId, tempId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send media: $e')),
         );
+      }
+    }
+    
     await _touchLastRead(force: true);
     _cachedUnreadMessageId = null;
-    _forceScrollToBottom();
   }
 
   Future<void> _touchLastRead({bool force = false}) async {
@@ -728,6 +799,150 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
         context,
       ).showSnackBar(SnackBar(content: Text('Unblock failed: $e')));
     });
+  }
+
+  Future<void> _startVoiceCall() async {
+    print('DEBUG: _startVoiceCall() called');
+    final callService = ref.read(callServiceProvider);
+    final currentUser = FirebaseAuth.instance.currentUser;
+    
+    if (currentUser == null) {
+      print('DEBUG: User not logged in');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You must be logged in to make calls')),
+      );
+      return;
+    }
+
+    try {
+      print('DEBUG: Getting user names...');
+      // Get current user's name
+      final userDoc = await FirestoreService().users.doc(currentUser.uid).get();
+      final userData = userDoc.data();
+      final callerName = userData?['name'] as String? ?? 'Unknown';
+
+      // Get peer's name for the call screen
+      final peerDoc = await FirestoreService().users.doc(widget.peerId).get();
+      final peerData = peerDoc.data();
+      final peerName = peerData?['name'] as String? ?? 'Unknown';
+
+      print('DEBUG: Starting call - callerName: $callerName, peerName: $peerName');
+      // Start the call
+      final callId = await callService.startVoiceCall(
+        callerId: currentUser.uid,
+        callerName: callerName,
+        receiverId: widget.peerId,
+      );
+
+      print('DEBUG: Call created with ID: $callId');
+      if (!mounted) return;
+
+      print('DEBUG: Navigating to CallScreen...');
+      // Navigate to call screen immediately
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => CallScreen(
+            callId: callId,
+            peerId: widget.peerId,
+            peerName: peerName,
+            isIncoming: false,
+          ),
+        ),
+      );
+      print('DEBUG: Navigation completed');
+    } catch (e) {
+      print('DEBUG: ERROR in _startVoiceCall: $e');
+      if (!mounted) return;
+      
+      // Handle specific error messages
+      final errorMessage = e.toString();
+      String displayMessage;
+      
+      if (errorMessage.contains('already on a call')) {
+        displayMessage = 'Finish current call first';
+      } else if (errorMessage.contains('already on another call')) {
+        displayMessage = 'User is already on another call';
+      } else {
+        displayMessage = 'Failed to start call: $e';
+      }
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(displayMessage)),
+      );
+    }
+  }
+
+  Future<void> _startVideoCall() async {
+    print('DEBUG: _startVideoCall() called');
+    final callService = ref.read(callServiceProvider);
+    final currentUser = FirebaseAuth.instance.currentUser;
+    
+    if (currentUser == null) {
+      print('DEBUG: User not logged in');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You must be logged in to make calls')),
+      );
+      return;
+    }
+
+    try {
+      print('DEBUG: Getting user names...');
+      // Get current user's name
+      final userDoc = await FirestoreService().users.doc(currentUser.uid).get();
+      final userData = userDoc.data();
+      final callerName = userData?['name'] as String? ?? 'Unknown';
+
+      // Get peer's name for the call screen
+      final peerDoc = await FirestoreService().users.doc(widget.peerId).get();
+      final peerData = peerDoc.data();
+      final peerName = peerData?['name'] as String? ?? 'Unknown';
+
+      print('DEBUG: Starting video call - callerName: $callerName, peerName: $peerName');
+      // Start the video call
+      final callId = await callService.startVideoCall(
+        callerId: currentUser.uid,
+        callerName: callerName,
+        receiverId: widget.peerId,
+      );
+
+      print('DEBUG: Video call created with ID: $callId');
+      if (!mounted) return;
+
+      print('DEBUG: Navigating to VideoCallScreen...');
+      // Navigate to video call screen immediately
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => VideoCallScreen(
+            callId: callId,
+            peerId: widget.peerId,
+            peerName: peerName,
+            isIncoming: false,
+          ),
+        ),
+      );
+      print('DEBUG: Navigation completed');
+    } catch (e) {
+      print('DEBUG: ERROR in _startVideoCall: $e');
+      if (!mounted) return;
+      
+      // Handle specific error messages
+      final errorMessage = e.toString();
+      String displayMessage;
+      
+      if (errorMessage.contains('already on a call')) {
+        displayMessage = 'Finish current call first';
+      } else if (errorMessage.contains('already on another call')) {
+        displayMessage = 'User is already on another call';
+      } else {
+        displayMessage = 'Failed to start video call: $e';
+      }
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(displayMessage)),
+      );
+    }
   }
 
   void _maybeScrollToBottom() {
@@ -964,7 +1179,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
   @override
   Widget build(BuildContext context) {
     final me = FirebaseAuth.instance.currentUser!.uid;
-    final messages = ref.watch(messagesProvider(widget.chatId));
+    final messages = ref.watch(combinedMessagesProvider(widget.chatId));
     final hides = ref.watch(hidesProvider(widget.chatId));
     final peerName = ref
         .watch(userDocProvider(widget.peerId))
@@ -1004,9 +1219,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen>
                       chatId: widget.chatId,
                     ),
                   ),
-                  _HeaderIcon(icon: Icons.videocam_outlined, onTap: () {}),
+                  _HeaderIcon(
+                    icon: Icons.videocam_rounded,
+                    onTap: () => _startVideoCall(),
+                  ),
                   const SizedBox(width: 14),
-                  _HeaderIcon(icon: Icons.call_outlined, onTap: () {}),
+                  _HeaderIcon(
+                    icon: Icons.call_rounded,
+                    onTap: () => _startVoiceCall(),
+                  ),
                   const SizedBox(width: 14),
                   GlassDropdown(
                     tooltip: 'More',

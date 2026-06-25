@@ -1,0 +1,75 @@
+// ============================================
+// Firestore Security Rules for Voice Calls
+// ============================================
+// Add these rules to your existing firestore.rules file
+// DO NOT replace your entire rules file - only add the calls section
+
+// Place this inside your "match /databases/{database}/documents {" block
+
+    // Voice/Video Calls Collection
+    match /calls/{callId} {
+      // Allow users to create calls where they are the caller
+      // This prevents users from impersonating others
+      allow create: if request.auth != null 
+                    && request.resource.data.callerId == request.auth.uid
+                    && request.resource.data.receiverId != request.auth.uid; // Can't call yourself
+      
+      // Allow caller and receiver to read the call document
+      // This enables both parties to see call status updates
+      allow read: if request.auth != null 
+                  && (resource.data.callerId == request.auth.uid 
+                      || resource.data.receiverId == request.auth.uid);
+      
+      // Allow caller and receiver to update the call
+      // Prevents third parties from interfering with calls
+      allow update: if request.auth != null 
+                    && (resource.data.callerId == request.auth.uid 
+                        || resource.data.receiverId == request.auth.uid)
+                    // Ensure caller ID cannot be changed after creation
+                    && request.resource.data.callerId == resource.data.callerId
+                    && request.resource.data.receiverId == resource.data.receiverId;
+      
+      // Prevent deletion to maintain call history/audit trail
+      // In production, use Cloud Functions to archive old calls instead
+      allow delete: if false;
+    }
+
+// ============================================
+// Optional: Query Rules for Performance
+// ============================================
+// These indexes improve query performance
+// Add to firestore.indexes.json or create via Firebase Console
+
+// Index for incoming calls query:
+// Collection: calls
+// Fields: receiverId (Ascending), status (Ascending)
+// Query scope: Collection
+
+// ============================================
+// Testing Rules (Development Only)
+// ============================================
+// For testing, you can temporarily use these more permissive rules
+// NEVER use these in production!
+
+// match /calls/{callId} {
+//   allow read, write: if request.auth != null;
+// }
+
+// ============================================
+// Deployment Instructions
+// ============================================
+// 1. Open Firebase Console
+// 2. Navigate to Firestore Database > Rules
+// 3. Add the calls match block to your existing rules
+// 4. Click "Publish" to deploy
+// 5. Wait 1-2 minutes for rules to propagate
+
+// ============================================
+// Verification
+// ============================================
+// After deploying, test with:
+// 1. User A creates a call -> Should succeed
+// 2. User B reads the call -> Should succeed
+// 3. User C (not involved) tries to read -> Should fail
+// 4. User B updates status to "accepted" -> Should succeed
+// 5. User A updates status to "ended" -> Should succeed

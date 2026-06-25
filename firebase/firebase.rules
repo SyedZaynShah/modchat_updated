@@ -158,6 +158,55 @@ service cloud.firestore {
 
     }
 
+    // ---------------- VOICE/VIDEO CALLS ----------------
+    match /calls/{callId} {
+      
+      function authed() {
+        return request.auth != null;
+      }
+      
+      function isCallerOrReceiver() {
+        return authed() && (
+          resource.data.callerId == request.auth.uid 
+          || resource.data.receiverId == request.auth.uid
+        );
+      }
+      
+      function isCallerInNew() {
+        return authed() && request.resource.data.callerId == request.auth.uid;
+      }
+      
+      function callerIdImmutable() {
+        return request.resource.data.callerId == resource.data.callerId;
+      }
+      
+      function receiverIdImmutable() {
+        return request.resource.data.receiverId == resource.data.receiverId;
+      }
+      
+      // Allow users to create calls where they are the caller
+      // Prevents impersonation and self-calling
+      allow create: if authed() 
+        && isCallerInNew()
+        && request.resource.data.receiverId != request.auth.uid
+        && request.resource.data.type in ['voice', 'video']
+        && request.resource.data.status in ['calling', 'ringing']
+        && request.resource.data.createdAt is timestamp;
+      
+      // Allow caller and receiver to read the call
+      allow read: if isCallerOrReceiver();
+      
+      // Allow caller and receiver to update call status
+      // Ensure caller and receiver IDs cannot be changed
+      allow update: if isCallerOrReceiver()
+        && callerIdImmutable()
+        && receiverIdImmutable()
+        && request.resource.data.type == resource.data.type;
+      
+      // Prevent deletion to maintain call history/audit trail
+      allow delete: if false;
+    }
+
     // ---------------- DENY EVERYTHING ELSE ----------------
     match /{document=**} {
       allow read, write: if false;

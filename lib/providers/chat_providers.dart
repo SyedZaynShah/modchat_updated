@@ -4,11 +4,16 @@ import '../models/message_model.dart';
 import '../services/chat_service.dart';
 import '../services/block_service.dart';
 import '../services/group_moderation_service.dart';
+import '../services/optimistic_message_service.dart';
 import 'auth_providers.dart';
 
 final chatServiceProvider = Provider<ChatService>((ref) {
   final fs = ref.watch(firestoreServiceProvider);
   return ChatService(fs);
+});
+
+final optimisticMessageServiceProvider = Provider<OptimisticMessageService>((ref) {
+  return OptimisticMessageService();
 });
 
 final groupModerationServiceProvider = Provider<GroupModerationService>((ref) {
@@ -116,6 +121,44 @@ final messagesProvider = StreamProvider.family<List<MessageModel>, String>((
   if (uid == null) return const Stream.empty();
   final service = ref.watch(chatServiceProvider);
   return service.streamMessages(chatId);
+});
+
+/// Combined messages provider that includes both Firestore messages
+/// and optimistic (pending) messages for instant UI updates
+final combinedMessagesProvider = StreamProvider.family<List<MessageModel>, String>((
+  ref,
+  chatId,
+) async* {
+  ref.keepAlive();
+  final uid = ref.watch(currentUserProvider)?.uid;
+  if (uid == null) {
+    yield [];
+    return;
+  }
+
+  final service = ref.watch(chatServiceProvider);
+  final optimisticService = ref.watch(optimisticMessageServiceProvider);
+
+  // Stream Firestore messages
+  final firestoreStream = service.streamMessages(chatId);
+
+  // Combine both streams
+  await for (final firestoreMessages in firestoreStream) {
+    final pendingMessages = optimisticService.getPendingMessages(chatId);
+    
+    // Remove any pending messages that have been confirmed by Firestore
+    // (This happens automatically when the message appears in Firestore)
+    final firestoreIds = firestoreMessages.map((m) => m.id).toSet();
+    final validPending = pendingMessages.where((pending) {
+      // Keep pending messages that haven't appeared in Firestore yet
+      return !firestoreIds.contains(pending.id) && pending.id.startsWith('pending_');
+    }).toList();
+
+    // Combine: pending messages first (newest), then Firestore messages
+    final combined = [...validPending, ...firestoreMessages];
+    
+    yield combined;
+  }
 });
 
 final hidesProvider = StreamProvider.family<Set<String>, String>((ref, chatId) {
