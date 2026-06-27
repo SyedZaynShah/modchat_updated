@@ -3,6 +3,9 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  
+  // Getter for direct FirebaseFirestore access
+  FirebaseFirestore get firestore => _db;
 
   static Future<void> resetPersistenceAndNetwork() async {
     final db = FirebaseFirestore.instance;
@@ -36,6 +39,10 @@ class FirestoreService {
       _db.collection('moderationLogs');
   CollectionReference<Map<String, dynamic>> get calls =>
       _db.collection('calls');
+  CollectionReference<Map<String, dynamic>> get callLogs =>
+      _db.collection('callLogs');
+  CollectionReference<Map<String, dynamic>> get groupCalls =>
+      _db.collection('groupCalls');
   CollectionReference<Map<String, dynamic>> messages(String chatId) =>
       dmChats.doc(chatId).collection('messages');
 

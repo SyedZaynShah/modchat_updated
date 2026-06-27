@@ -4,9 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../../providers/call_providers.dart';
 import '../../models/call_state.dart';
-import '../../models/network_quality.dart';
 import '../../services/call_controller.dart';
-import '../../widgets/network_quality_indicator.dart';
 
 /// Video Call Screen - Premium UI (Phase 3.5)
 /// Production-grade 1-to-1 video calling
@@ -53,9 +51,6 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
   
   // Reconnection state
   bool _isReconnecting = false;
-  
-  // Network quality state
-  NetworkQuality _networkQuality = NetworkQuality.good;
 
   @override
   void initState() {
@@ -100,14 +95,6 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
           if (mounted) {
             setState(() {
               _isReconnecting = isReconnecting;
-            });
-          }
-        },
-        onNetworkQualityChange: (NetworkQuality quality) {
-          print('[VideoCallScreen] 📶 NETWORK_QUALITY: ${quality.displayText}');
-          if (mounted) {
-            setState(() {
-              _networkQuality = quality;
             });
           }
         },
@@ -440,27 +427,19 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Contact name and network quality
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  widget.peerName,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    shadows: [
-                      Shadow(
-                        color: Colors.black45,
-                        blurRadius: 8,
-                      ),
-                    ],
+            Text(
+              widget.peerName,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                shadows: [
+                  Shadow(
+                    color: Colors.black45,
+                    blurRadius: 8,
                   ),
-                ),
-                const SizedBox(width: 8),
-                NetworkQualityIndicator(quality: _networkQuality),
-              ],
+                ],
+              ),
             ),
             const SizedBox(height: 4),
             Text(

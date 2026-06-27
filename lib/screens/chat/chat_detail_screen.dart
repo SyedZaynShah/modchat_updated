@@ -2018,7 +2018,14 @@ class _BlockMessageView extends StatelessWidget {
         message.messageType == MessageType.file;
 
     Widget content;
-    if (message.isDeletedForAll) {
+    
+    // Check if this is a call message (system message with call meta)
+    if (message.kind == 'system' && message.meta != null && message.meta!.containsKey('callType')) {
+      content = Container(
+        constraints: BoxConstraints(maxWidth: maxW),
+        child: _buildCallMessage(message),
+      );
+    } else if (message.isDeletedForAll) {
       content = const Text(
         'This message was deleted',
         style: TextStyle(
@@ -2248,6 +2255,121 @@ class _BlockMessageView extends StatelessWidget {
         );
       },
     );
+  }
+  
+  Widget _buildCallMessage(MessageModel message) {
+    final meta = message.meta!;
+    final callType = meta['callType'] as String? ?? 'voice';
+    final callStatus = meta['callStatus'] as String? ?? 'completed';
+    final callDuration = meta['callDuration'] as int? ?? 0;
+    final isIncoming = meta['isIncoming'] as bool? ?? false;
+    
+    final isVideo = callType == 'video';
+    final isMissed = callStatus == 'missed';
+    final isCompleted = callStatus == 'completed';
+    
+    final icon = isVideo ? Icons.videocam : Icons.phone;
+    final directionIcon = isIncoming ? Icons.call_received : Icons.call_made;
+    
+    final color = isMissed ? Colors.red : (isCompleted ? Colors.green : Colors.grey);
+    
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isMissed 
+            ? Colors.red.withOpacity(0.05) 
+            : Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isMissed 
+              ? Colors.red.withOpacity(0.2) 
+              : Colors.grey.shade300,
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Call icon
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              icon,
+              color: color,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Call info
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    directionIcon,
+                    size: 14,
+                    color: color,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _getCallText(isVideo, callStatus, isMissed, isCompleted),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: isMissed ? Colors.red : AppColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              if (isCompleted && callDuration > 0) ...[
+                const SizedBox(height: 2),
+                Text(
+                  _formatCallDuration(callDuration),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  
+  String _getCallText(bool isVideo, String status, bool isMissed, bool isCompleted) {
+    if (isMissed) {
+      return 'Missed ${isVideo ? 'video' : 'voice'} call';
+    } else if (status == 'declined') {
+      return '${isVideo ? 'Video' : 'Voice'} call declined';
+    } else if (status == 'cancelled') {
+      return '${isVideo ? 'Video' : 'Voice'} call cancelled';
+    } else if (isCompleted) {
+      return '${isVideo ? 'Video' : 'Voice'} call';
+    } else {
+      return '${isVideo ? 'Video' : 'Voice'} call failed';
+    }
+  }
+  
+  String _formatCallDuration(int seconds) {
+    if (seconds < 60) {
+      return '${seconds}s';
+    }
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    if (secs == 0) {
+      return '${minutes}m';
+    }
+    return '${minutes}m ${secs}s';
   }
 }
 

@@ -243,6 +243,245 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ---------------- CALL LOGS (PERMANENT HISTORY) ----------------
+    match /callLogs/{logId} {
+      
+      function authed() {
+        return request.auth != null;
+      }
+      
+      function isCallerOrReceiver() {
+        return authed() && (
+          resource.data.callerId == request.auth.uid 
+          || resource.data.receiverId == request.auth.uid
+        );
+      }
+      
+      function isCallerOrReceiverInNew() {
+        return authed() && (
+          request.resource.data.callerId == request.auth.uid 
+          || request.resource.data.receiverId == request.auth.uid
+        );
+      }
+      
+      // Allow creating call logs if user is either caller or receiver
+      allow create: if isCallerOrReceiverInNew()
+        && request.resource.data.type in ['voice', 'video']
+        && request.resource.data.status in ['missed', 'completed', 'declined', 'cancelled', 'failed']
+        && request.resource.data.startedAt is timestamp;
+      
+      // Allow caller and receiver to read their call logs
+      allow read: if isCallerOrReceiver();
+      
+      // Allow updates only by participants (for duration updates, etc.)
+      allow update: if isCallerOrReceiver();
+      
+      // Allow deletion only by participants (user wants to delete their history)
+      allow delete: if isCallerOrReceiver();
+    }
+
+    // ---------------- SIGNAL TEST (Minimal Testing) ----------------
+    match /groupCallSignals/{signalId} {
+      
+      function authed() {
+        return request.auth != null;
+      }
+      
+      // Anyone authenticated can create signals
+      allow create: if authed()
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.targetUserId is string
+        && request.resource.data.received is bool;
+      
+      // Target user can read their signals
+      allow read: if authed() && (
+        resource.data.targetUserId == request.auth.uid
+        || resource.data.senderId == request.auth.uid
+      );
+      
+      // Target user can update to acknowledge
+      allow update: if authed()
+        && resource.data.targetUserId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['received']);
+      
+      // No deletion
+      allow delete: if false;
+    }
+
+    // ---------------- GROUP CALL INVITATIONS (Phase 1.1: Perfect Signaling) ----------------
+    match /groupCallInvitations/{invitationId} {
+      
+      function authed() {
+        return request.auth != null;
+      }
+      
+      function isInviter() {
+        return authed() && request.resource.data.inviterId == request.auth.uid;
+      }
+      
+      function isTargetUser() {
+        return authed() && resource.data.targetUserId == request.auth.uid;
+      }
+      
+      function isTargetUserInNew() {
+        return authed() && request.resource.data.targetUserId == request.auth.uid;
+      }
+      
+      function isGroupMember(groupId) {
+        return authed() 
+          && exists(/databases/$(database)/documents/dmChats/$(groupId))
+          && (request.auth.uid in get(/databases/$(database)/documents/dmChats/$(groupId)).data.members);
+      }
+      
+      function hasValidInvitationStructure() {
+        return request.resource.data.callId is string
+          && request.resource.data.groupId is string
+          && request.resource.data.inviterId is string
+          && request.resource.data.targetUserId is string
+          && request.resource.data.status in ['pending', 'accepted', 'declined', 'expired'];
+      }
+      
+      // Allow creating invitations if:
+      // - User is the inviter
+      // - User is a member of the group
+      // - Valid structure
+      allow create: if isInviter()
+        && isGroupMember(request.resource.data.groupId)
+        && hasValidInvitationStructure();
+      
+      // Allow reading invitations if:
+      // - User is the target user (receiver)
+      // - OR user is the inviter
+      allow read: if isTargetUser() || (authed() && resource.data.inviterId == request.auth.uid);
+      
+      // Allow updating invitations if:
+      // - User is the target user (to accept/decline)
+      // - Can only update status field
+      allow update: if isTargetUser()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+      
+      // Prevent deletion
+      allow delete: if false;
+    }
+
+    // ---------------- GROUP CALLS (Phase 3: Group Audio Calling) ----------------
+    match /groupCalls/{callId} {
+      
+      function authed() {
+        return request.auth != null;
+      }
+      
+      // Check if user is in any participant list (invited, joined, declined, or left)
+      function isInvolved() {
+        return authed() && (
+          request.auth.uid in resource.data.invitedParticipants
+          || request.auth.uid in resource.data.joinedParticipants
+          || request.auth.uid in resource.data.declinedParticipants
+          || request.auth.uid in resource.data.leftParticipants
+          || request.auth.uid == resource.data.initiatorId
+        );
+      }
+      
+      function isInitiator() {
+        return authed() && request.resource.data.initiatorId == request.auth.uid;
+      }
+      
+      function isGroupMember(groupId) {
+        return authed() 
+          && exists(/databases/$(database)/documents/dmChats/$(groupId))
+          && (request.auth.uid in get(/databases/$(database)/documents/dmChats/$(groupId)).data.members);
+      }
+      
+      function hasValidStructure() {
+        return request.resource.data.status in ['ringing', 'active', 'ended']
+          && request.resource.data.invitedParticipants is list
+          && request.resource.data.joinedParticipants is list
+          && request.resource.data.declinedParticipants is list
+          && request.resource.data.leftParticipants is list
+          && request.resource.data.groupId is string
+          && request.resource.data.initiatorId is string
+          && ('type' in request.resource.data ? request.resource.data.type == 'group_audio' : true);
+      }
+      
+      // PHASE 3: Enforce maximum 8 participants
+      function respectsParticipantLimit() {
+        return request.resource.data.joinedParticipants.size() <= 8;
+      }
+      
+      // Check if user will be involved after the update (for queries)
+      function willBeInvolved() {
+        return authed() && (
+          request.auth.uid in request.resource.data.invitedParticipants
+          || request.auth.uid in request.resource.data.joinedParticipants
+          || request.auth.uid in request.resource.data.declinedParticipants
+          || request.auth.uid in request.resource.data.leftParticipants
+          || request.auth.uid == request.resource.data.initiatorId
+        );
+      }
+      
+      // Allow creating group calls if:
+      // - User is authenticated and the initiator
+      // - User is a member of the group
+      // - Valid data structure
+      allow create: if isInitiator()
+        && isGroupMember(request.resource.data.groupId)
+        && hasValidStructure();
+      
+      // Allow reading calls where user is involved
+      // This supports queries like: where('invitedParticipants', 'array-contains', userId)
+      allow read: if authed() && (
+        request.auth.uid in resource.data.invitedParticipants
+        || request.auth.uid in resource.data.joinedParticipants
+        || request.auth.uid in resource.data.declinedParticipants
+        || request.auth.uid in resource.data.leftParticipants
+        || request.auth.uid == resource.data.initiatorId
+      );
+      
+      // Allow updates if user is currently involved OR will be involved after update
+      // This allows joining, declining, leaving, etc.
+      // PHASE 3: Enforce max 8 participants
+      allow update: if authed() && (
+        isInvolved() || willBeInvolved()
+      ) && request.resource.data.groupId == resource.data.groupId
+        && request.resource.data.initiatorId == resource.data.initiatorId
+        && respectsParticipantLimit();
+      
+      // Prevent deletion to maintain audit trail
+      allow delete: if false;
+      
+      // Signaling subcollection for WebRTC (Phase 2)
+      match /signaling/{signalingDoc} {
+        function parentIsJoined() {
+          return authed() && exists(/databases/$(database)/documents/groupCalls/$(callId))
+            && (request.auth.uid in get(/databases/$(database)/documents/groupCalls/$(callId)).data.joinedParticipants);
+        }
+        
+        allow read, write: if parentIsJoined();
+        
+        // Allow reading/writing ICE candidates subcollection
+        match /candidates/{candidateDoc} {
+          allow read, write: if parentIsJoined();
+        }
+      }
+      
+      // PERMANENT peerConnections subcollection for WebRTC signaling (Phase 2)
+      // Structure: groupCalls/{callId}/peerConnections/{pairId}
+      // pairId format: alphabetically sorted user IDs (e.g., "alice_bob")
+      match /peerConnections/{pairId} {
+        function parentIsJoined() {
+          return authed() && exists(/databases/$(database)/documents/groupCalls/$(callId))
+            && (request.auth.uid in get(/databases/$(database)/documents/groupCalls/$(callId)).data.joinedParticipants);
+        }
+        
+        function isInPair() {
+          return authed() && pairId.matches('.*' + request.auth.uid + '.*');
+        }
+        
+        // Users can only access their own peer connections
+        allow read, write: if parentIsJoined() && isInPair();
+      }
+    }
+
     // ---------------- DENY EVERYTHING ELSE ----------------
     match /{document=**} {
       allow read, write: if false;

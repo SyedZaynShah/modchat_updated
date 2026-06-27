@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'firestore_service.dart';
-import '../models/network_quality.dart';
 
 /// Media State Machine for production stability
 enum MediaState {
@@ -41,7 +40,6 @@ class CallController {
   Function(MediaStream)? onRemoteStream;
   Function(String)? onConnectionStateChange;
   Function(bool)? onReconnectionStateChange; // true = reconnecting, false = connected
-  Function(NetworkQuality)? onNetworkQualityChange;
   
   // State
   bool _isDisposed = false;
@@ -53,11 +51,6 @@ class CallController {
   DateTime? _reconnectionStartTime;
   Timer? _reconnectionTimer;
   static const Duration _reconnectionTimeout = Duration(seconds: 15);
-  
-  // Network quality tracking
-  NetworkQuality _networkQuality = NetworkQuality.good;
-  RTCIceConnectionState? _lastIceState;
-  RTCPeerConnectionState? _lastConnectionState;
   
   // ICE candidate buffer (store candidates received before remote description is set)
   final List<RTCIceCandidate> _candidateBuffer = [];
@@ -76,7 +69,6 @@ class CallController {
     this.onRemoteStream,
     this.onConnectionStateChange,
     this.onReconnectionStateChange,
-    this.onNetworkQualityChange,
   });
 
   /// Initialize WebRTC peer connection
@@ -274,10 +266,6 @@ class CallController {
     // Handle connection state changes
     _peerConnection!.onConnectionState = (RTCPeerConnectionState state) {
       print('[CallController] 🔗 CONNECTION_STATE: $state');
-      
-      _lastConnectionState = state;
-      _updateNetworkQuality();
-      
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         _mediaState = MediaState.connected;
         print('[CallController] ✅ MEDIA_STATE: connected');
@@ -291,9 +279,6 @@ class CallController {
     // Handle ICE connection state
     _peerConnection!.onIceConnectionState = (RTCIceConnectionState state) {
       print('[CallController] 🧊 ICE_CONNECTION_STATE: $state');
-      
-      _lastIceState = state;
-      _updateNetworkQuality();
       
       if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
         print('[CallController] ❌ ICE_FAILED: Connection cannot be established');
@@ -603,9 +588,6 @@ class CallController {
   
   /// Get reconnection state
   bool get isReconnecting => _isReconnecting;
-  
-  /// Get current network quality
-  NetworkQuality get networkQuality => _networkQuality;
 
   /// Switch camera between front and back (video calls only)
   /// Does NOT renegotiate peer connection - replaces track only
@@ -666,43 +648,6 @@ class CallController {
     }
   }
 
-  /// Calculate and update network quality based on connection states
-  void _updateNetworkQuality() {
-    NetworkQuality newQuality;
-    
-    // If reconnecting, show reconnecting state
-    if (_isReconnecting) {
-      newQuality = NetworkQuality.reconnecting;
-    }
-    // Check ICE connection state (primary indicator)
-    else if (_lastIceState == RTCIceConnectionState.RTCIceConnectionStateConnected ||
-             _lastIceState == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
-      // Check peer connection state for refinement
-      if (_lastConnectionState == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-        newQuality = NetworkQuality.excellent;
-      } else {
-        newQuality = NetworkQuality.good;
-      }
-    } else if (_lastIceState == RTCIceConnectionState.RTCIceConnectionStateChecking ||
-               _lastIceState == RTCIceConnectionState.RTCIceConnectionStateNew) {
-      newQuality = NetworkQuality.good;
-    } else if (_lastIceState == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
-      newQuality = NetworkQuality.poor;
-    } else if (_lastIceState == RTCIceConnectionState.RTCIceConnectionStateFailed ||
-               _lastIceState == RTCIceConnectionState.RTCIceConnectionStateClosed) {
-      newQuality = NetworkQuality.reconnecting;
-    } else {
-      newQuality = NetworkQuality.good; // Default
-    }
-    
-    // Only update if quality changed
-    if (newQuality != _networkQuality) {
-      _networkQuality = newQuality;
-      print('[CallController] 📶 NETWORK_QUALITY: ${newQuality.displayText}');
-      onNetworkQualityChange?.call(newQuality);
-    }
-  }
-
   /// Handle disconnection - start reconnection process
   void _handleDisconnection() {
     if (_isReconnecting || _isDisposed) {
@@ -714,9 +659,6 @@ class CallController {
     _isReconnecting = true;
     _reconnectionStartTime = DateTime.now();
     onReconnectionStateChange?.call(true);
-    
-    // Update quality to reconnecting
-    _updateNetworkQuality();
     
     _startReconnectionTimer();
   }
@@ -749,9 +691,6 @@ class CallController {
     _isReconnecting = false;
     _reconnectionStartTime = null;
     onReconnectionStateChange?.call(false);
-    
-    // Update quality to reflect restored connection
-    _updateNetworkQuality();
   }
 
   /// Handle connection failure (permanent)

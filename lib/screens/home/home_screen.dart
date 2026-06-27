@@ -20,6 +20,8 @@ import '../chat/group_chat_detail_screen.dart';
 import '../home/new_chat_screen.dart';
 import '../group/create_group_screen.dart';
 import '../settings/settings_screen.dart';
+import '../calls/calls_screen.dart';
+import '../signal_test_screen.dart';
 import 'package:image_picker/image_picker.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -132,6 +134,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         Navigator.of(
           context,
         ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+        break;
+      case 'signal_test':
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const SignalTestScreen()));
         break;
       case 'new_group':
         Navigator.pushNamed(context, CreateGroupScreen.routeName);
@@ -458,8 +465,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               icon: Icons.groups_rounded,
               text: 'No communities yet',
             ),
-            // Calls placeholder
-            _buildPlaceholder(icon: Icons.call_rounded, text: 'No calls yet'),
+            // Calls screen
+            const CallsScreen(),
           ],
         ),
       ),
@@ -1193,6 +1200,11 @@ class _HomeHeader extends StatelessWidget {
               value: 'starred',
               label: 'Starred messages',
               icon: Icons.star,
+            ),
+            GlassDropdownItem(
+              value: 'signal_test',
+              label: '🔧 Signal Test',
+              icon: Icons.bug_report,
             ),
             GlassDropdownItem(
               value: 'settings',

@@ -20,6 +20,8 @@ import 'screens/group/moderation_dashboard_screen.dart';
 import 'screens/group/join_group_screen.dart';
 import 'ui/splash/splash_screen.dart';
 import 'widgets/incoming_call_listener.dart';
+import 'widgets/incoming_group_call_listener.dart';
+import 'widgets/signal_test_widget.dart';
 
 final GlobalKey<NavigatorState> _navKey = GlobalKey<NavigatorState>();
 
@@ -107,9 +109,17 @@ class _AppState extends ConsumerState<App> {
       themeMode: themeMode,
       themeAnimationDuration: const Duration(milliseconds: 250),
       navigatorKey: _navKey,
-      home: const IncomingCallListener(child: ModChatSplashScreen()),
+      home: const SignalTestWidget(
+        child: IncomingGroupCallListener(
+          child: IncomingCallListener(child: ModChatSplashScreen()),
+        ),
+      ),
       routes: {
-        "/home": (context) => const IncomingCallListener(child: AuthGate()),
+        "/home": (context) => const SignalTestWidget(
+          child: IncomingGroupCallListener(
+            child: IncomingCallListener(child: AuthGate()),
+          ),
+        ),
         LandingScreen.routeName: (context) => const LandingScreen(),
       },
       onGenerateRoute: (settings) {

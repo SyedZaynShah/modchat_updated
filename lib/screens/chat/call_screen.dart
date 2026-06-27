@@ -4,10 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../../providers/call_providers.dart';
 import '../../models/call_state.dart';
-import '../../models/network_quality.dart';
 import '../../widgets/call_status_overlay.dart';
 import '../../services/call_controller.dart';
-import '../../widgets/network_quality_indicator.dart';
 
 class CallScreen extends ConsumerStatefulWidget {
   static const routeName = '/call';
@@ -46,9 +44,6 @@ class _CallScreenState extends ConsumerState<CallScreen>
   
   // Reconnection state
   bool _isReconnecting = false;
-  
-  // Network quality state
-  NetworkQuality _networkQuality = NetworkQuality.good;
   
   // WebRTC controller
   CallController? _callController;
@@ -92,14 +87,6 @@ class _CallScreenState extends ConsumerState<CallScreen>
           if (mounted) {
             setState(() {
               _isReconnecting = isReconnecting;
-            });
-          }
-        },
-        onNetworkQualityChange: (NetworkQuality quality) {
-          print('[CallScreen] 📶 NETWORK_QUALITY: ${quality.displayText}');
-          if (mounted) {
-            setState(() {
-              _networkQuality = quality;
             });
           }
         },
@@ -469,11 +456,6 @@ class _CallScreenState extends ConsumerState<CallScreen>
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-
-            const SizedBox(height: 8),
-
-            // Network quality indicator
-            NetworkQualityIndicator(quality: _networkQuality),
 
             const SizedBox(height: 8),
 
