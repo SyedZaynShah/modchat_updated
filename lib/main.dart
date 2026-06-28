@@ -40,8 +40,13 @@ Future<void> main() async {
     } catch (_) {}
 
     try {
+      // Force long-polling on web. This avoids the firebase-js-sdk WebChannel
+      // bug that throws "FIRESTORE INTERNAL ASSERTION FAILED: Unexpected state"
+      // intermittently while streaming. Long-polling is slightly less efficient
+      // but far more reliable in browsers.
       FirebaseFirestore.instance.settings = const Settings(
         persistenceEnabled: false,
+        webExperimentalForceLongPolling: true,
       );
     } catch (_) {}
 
