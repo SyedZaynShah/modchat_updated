@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import '../theme/theme.dart';
 import '../models/message_model.dart';
 import '../services/firestore_service.dart';
+import '../services/message_moderation_service.dart';
 import '../services/media_picker_service.dart';
 import '../screens/media/media_preview_screen.dart';
 
@@ -705,6 +706,23 @@ class _InputFieldState extends State<InputField> {
     _sendQueue = _sendQueue.catchError((_) {}).then((_) async {
       try {
         await widget.onSend(text);
+      } on MessageBlockedException {
+        // Message was blocked by AI moderation in a group. The group screen
+        // already showed a friendly explanation — just restore the draft so
+        // the user can edit and retry, and suppress the generic error below.
+        if (!mounted) return;
+        if (_controller.text.trim().isEmpty) {
+          _controller.text = draft;
+          _controller.selection = TextSelection.fromPosition(
+            TextPosition(offset: _controller.text.length),
+          );
+          if (!_hasText) {
+            setState(() => _hasText = true);
+            widget.onTypingChanged?.call(true);
+            widget.onTextChanged?.call(_controller.text);
+          }
+        }
+        return;
       } catch (e) {
         final msg = e.toString();
 

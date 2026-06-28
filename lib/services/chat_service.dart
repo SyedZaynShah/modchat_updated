@@ -188,7 +188,11 @@ class ChatService {
     return _fs
         .messages(chatId)
         .orderBy('timestamp', descending: false)
-        .snapshots(includeMetadataChanges: true)
+        // NOTE: deliberately NOT using includeMetadataChanges. Metadata-only
+        // events (pending-write / from-cache flips) multiply snapshots and are a
+        // known amplifier of the firebase-js-sdk "Unexpected state" assertion on
+        // web. The optimistic-message layer already handles the "sending" state.
+        .snapshots()
         .asyncMap((s) async {
           // Get member doc for timeline filtering
           Timestamp? joinedAt;

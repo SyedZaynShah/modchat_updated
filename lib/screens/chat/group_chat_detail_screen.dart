@@ -16,6 +16,7 @@ import '../../providers/group_call_providers.dart';
 import '../../services/firestore_service.dart';
 import '../../services/supabase_service.dart';
 import '../../services/storage_service.dart';
+import '../../services/message_moderation_service.dart';
 import '../group/group_settings_screen.dart';
 import '../../widgets/group_message_bubble.dart';
 import '../../widgets/video_viewer_screen.dart';
@@ -1180,6 +1181,31 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                     return;
                   }
                 }
+
+                // 🔒 AI moderation (group messages only): run the message
+                // through the trained model. If it is abusive / swear / threat,
+                // do NOT send it and tell the sender why. Throwing
+                // MessageBlockedException makes InputField restore the draft so
+                // the user can edit and retry.
+                final moderationMessenger = ScaffoldMessenger.of(context);
+                final moderation = await ref
+                    .read(messageModerationServiceProvider)
+                    .classify(text);
+                if (moderation.blocked) {
+                  if (mounted) {
+                    moderationMessenger.showSnackBar(
+                      SnackBar(
+                        backgroundColor: const Color(0xFFEF4444),
+                        content: Text(
+                          'Message not sent — detected as "${moderation.label}". '
+                          'Abusive, swear or threatening messages are not allowed in groups.',
+                        ),
+                      ),
+                    );
+                  }
+                  throw MessageBlockedException(moderation.label);
+                }
+
                 final reply = _replyTarget.value;
                 _replyTarget.value = null;
                 _typingController.onSend(widget.chatId);

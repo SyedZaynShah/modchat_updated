@@ -10,12 +10,12 @@ class FirestoreService {
   static Future<void> resetPersistenceAndNetwork() async {
     final db = FirebaseFirestore.instance;
     if (kIsWeb) {
-      try {
-        await db.disableNetwork();
-      } catch (_) {}
-      try {
-        await db.enableNetwork();
-      } catch (_) {}
+      // No-op on web. Toggling disableNetwork()/enableNetwork() here was a
+      // primary trigger of the firebase-js-sdk "FIRESTORE INTERNAL ASSERTION
+      // FAILED: Unexpected state" bug: it tears down active watch streams
+      // mid-flight and corrupts the listener target state. Web persistence is
+      // already disabled in main(), so there is no cache to clear and nothing
+      // useful to reset here.
       return;
     }
     try {
