@@ -9,6 +9,18 @@ the message is **not** sent and the sender is told why. `normal` messages go thr
 Flutter (group send)  ──POST /predict {text}──▶  this server  ──▶  { label, blocked }
 ```
 
+## Quick start (scripts)
+
+On Windows you can skip the manual steps below and just run, from inside this folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1   # one-time: creates .venv + installs deps
+powershell -ExecutionPolicy Bypass -File .\run.ps1      # starts the server on :8000
+```
+
+`setup.ps1` also tells you if any model files are still missing. The manual steps
+below are the same thing, spelled out.
+
 ## 1. Put the model in place
 
 Copy your `moderation_model` files into [`model/`](model/) so it contains:
