@@ -1,0 +1,10 @@
+# Python virtual env
+.venv/
+__pycache__/
+*.pyc
+
+# Trained model weights are large — keep them out of git.
+# (Remove these lines if you DO want to commit the model.)
+model/*.safetensors
+model/*.bin
+model/pytorch_model.bin
