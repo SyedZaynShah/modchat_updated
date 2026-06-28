@@ -1,225 +1,232 @@
-# 🚀 QUICK TEST GUIDE - Group Call WebRTC
+# PHASE 1.1 + 1.2 - QUICK TEST GUIDE
 
-## ⚡ 2-MINUTE SETUP
+## 🚀 How to Test (5 Minutes)
 
-### Requirements
-- 2 physical devices (or emulators)
-- Both logged in to different accounts
-- Both members of the same group
-- Microphone permissions granted
+**NEW IN PHASE 1.2:** Rejoin support added! Users can now rejoin after leaving or declining.
+
+### Prerequisites
+- 4 devices/users in the same group
+- App running on all devices
+
+### Step-by-Step
+
+#### 1️⃣ USER A: Start Call
+```
+Open group chat
+→ Tap orange science icon 🧪
+→ Tap "Start Group Call"
+```
+**Expected:**
+- Status: "Ringing"
+- In Call: 1 (User A)
+- Invited: 3 (Users B, C, D)
+
+#### 2️⃣ USER B: Join Call
+```
+Open group chat
+→ Tap orange science icon 🧪
+→ See blue banner: "You have been invited"
+→ Tap "Join"
+```
+**Expected on ALL devices:**
+- Status: "Active"
+- In Call: 2 (Users A, B)
+- Invited: 2 (Users C, D)
+- ⚡ Updates appear INSTANTLY
+
+#### 3️⃣ USER C: Join Call
+```
+Tap "Join"
+```
+**Expected on ALL devices:**
+- In Call: 3 (Users A, B, C)
+- Invited: 1 (User D)
+- ⚡ Updates appear INSTANTLY
+
+#### 4️⃣ USER D: Join Call
+```
+Tap "Join"
+```
+**Expected on ALL devices:**
+- In Call: 4 (Users A, B, C, D)
+- Invited: 0
+- ⚡ Updates appear INSTANTLY
+
+#### 5️⃣ USER C: Leave Call
+```
+Tap "Leave Call"
+```
+**Expected on ALL devices:**
+- In Call: 3 (Users A, B, D)
+- Left: 1 (User C)
+- ⚡ Call continues for others
+
+#### 6️⃣ USER C: Rejoin (NEW: Phase 1.2)
+```
+User C sees "Rejoin Call" button
+→ Tap "Rejoin Call"
+```
+**Expected on ALL devices:**
+- In Call: 4 (Users A, B, C, D)
+- Left: 0
+- ⚡ User C removed from "Left" list
+
+#### 7️⃣ USER A: End Call
+```
+Tap "End Call for Everyone"
+```
+**Expected on ALL devices:**
+- Status: "Ended"
+- In Call: 0
+- ⚡ Room terminated
 
 ---
 
-## 📱 TEST STEPS
+## ✅ Success = All These True
 
-### Step 1: Start Call (Device A)
-```
-1. Open group chat
-2. Tap phone icon (top-right)
-3. Wait on call screen
-```
+### Phase 1.1 (Room Management)
+- [ ] All 4 users can see the science icon 🧪
+- [ ] User A can create room
+- [ ] Other users see invitation instantly
+- [ ] Users can join one by one
+- [ ] Participant count updates on all devices
+- [ ] Participant list updates on all devices
+- [ ] Updates appear in < 1 second
+- [ ] Initiator leaving ends call for all
+- [ ] No audio plays (this is room management only)
+- [ ] No video appears (this is room management only)
 
-**Expected:** Call screen opens, shows "Ringing..."
-
----
-
-### Step 2: Receive Call (Device B)
-```
-Wait 2-5 seconds
-```
-
-**Expected:** Incoming call screen appears automatically
-
-**❌ If not:** Check console for `[IncomingGroupCallListener]` logs
-
----
-
-### Step 3: Accept Call (Device B)
-```
-1. Tap "Accept" button
-```
-
-**Expected:** Navigate to call screen, see Device A as participant
+### Phase 1.2 (Rejoin Support) 🆕
+- [ ] User can leave and see "Rejoin Call" button
+- [ ] User can tap "Rejoin Call" and return to call
+- [ ] User can decline and see "Join Call" button
+- [ ] User can tap "Join Call" after declining
+- [ ] Multiple leave/rejoin cycles work
+- [ ] Rejoined user removed from "Left" list
+- [ ] All devices see rejoin updates instantly
 
 ---
 
-### Step 4: Verify Connection (Both Devices)
-```
-Watch console logs carefully
-```
+## 🐛 If Something Breaks
 
-**Must See:**
-```
-✅ Initializing local audio stream
-✅ Local stream initialized
-✅ Creating peer connection
-✅ Offer sent / Answer sent
-✅ ICE candidate sent (multiple)
-✅ ICE candidate received (multiple)
-✅ Connection state: connected
-✅ Received track from {userId}
-```
+### Can't see science icon?
+- Pull latest code
+- Check `group_chat_detail_screen.dart` has orange icon
+- Rebuild app
 
-**Timing:** Should complete in 5-10 seconds
+### Can't create room?
+- Check Firestore rules allow write to `groupCalls/`
+- Check user is member of group
+- Check console for errors
 
----
+### Updates not instant?
+- Check internet connection
+- Check Firestore is online
+- Refresh screen (pull down)
 
-### Step 5: Test Audio
-```
-Device A: Say "Hello from A"
-Device B: Should HEAR it
-
-Device B: Say "Hello from B"
-Device A: Should HEAR it
-```
-
-**✅ Success:** Both can hear each other clearly
-
-**❌ Failure:** Check:
-- Microphone permissions granted?
-- Volume turned up?
-- Speaker/earpiece working?
-- Console shows "Received track"?
+### Call doesn't end?
+- Check console logs for "Initiator leaving"
+- Verify `endGroupCall()` is called
+- Check Firestore rules
 
 ---
 
-## 🔍 QUICK DEBUG
+## 📱 What You'll See
 
-### No Incoming Call?
+### Status Card
 ```
-1. Check Device B console:
-   [IncomingGroupCallListener] 🔔 Incoming group call
-
-2. If missing, check:
-   - Is Device B in group members?
-   - Is app wrapped with IncomingGroupCallListener?
-```
-
-### No Connection?
-```
-1. Check both consoles for:
-   [GroupCallController] 📤 Creating offer
-   [GroupCallController] 📨 Received answer
-
-2. If missing:
-   - Check Firestore rules deployed
-   - Check network connectivity
+┌─────────────────────────────┐
+│ 👥 Test Group               │
+├─────────────────────────────┤
+│ Status: Active              │
+│ Call ID: abc123...          │
+└─────────────────────────────┘
 ```
 
-### No Audio?
+### Call Info Card
 ```
-1. Check both consoles for:
-   [GroupCallController] 📥 Received track from {userId}
-
-2. If missing:
-   - Microphone permission denied?
-   - Track not added to peer connection?
-
-3. If present but no audio:
-   - Volume too low?
-   - Speaker/earpiece issue?
-   - Try toggling speaker button
+┌─────────────────────────────┐
+│ Call Information            │
+├─────────────────────────────┤
+│ Participants: 4             │
+│ Invited: 0                  │
+│ Declined: 0                 │
+│ Left: 0                     │
+└─────────────────────────────┘
 ```
 
----
-
-## ✅ SUCCESS CHECKLIST
-
-Mark each when verified:
-
-- [ ] Device B receives incoming call screen
-- [ ] Device B accepts and joins call
-- [ ] Console shows "Offer sent" (Device A)
-- [ ] Console shows "Answer sent" (Device B)
-- [ ] Console shows "ICE candidate sent" (both, multiple times)
-- [ ] Console shows "Connection state: connected" (both)
-- [ ] Console shows "Received track" (both)
-- [ ] Device A hears Device B
-- [ ] Device B hears Device A
-- [ ] Audio is clear (no distortion/delay)
-
-**All checked = SIGNALING WORKS! ✅**
-
----
-
-## 🆘 HELP
-
-If any step fails, see detailed debugging in:
-- `test_group_call_signaling.md` - Full test procedure
-- `GROUP_CALL_SIGNALING_FIX_STATUS.md` - Implementation details
-
----
-
-## 📊 FIRESTORE CHECK
-
-If issues persist, verify Firestore data:
-
-### 1. Check Call Document
+### Participants Card
 ```
-Path: groupCalls/{callId}
-
-Should have:
-- status: "active"
-- participants: [userA, userB]
-- joinedParticipants: [userA, userB]
-```
-
-### 2. Check Signaling
-```
-Path: groupCalls/{callId}/signaling/{userA}_{userB}
-
-Should have:
-- type: "offer"
-- sdp: "v=0\r\no=- ..."
-- from: userA
-- to: userB
-```
-
-### 3. Check ICE Candidates
-```
-Path: groupCalls/{callId}/signaling/{userA}_{userB}_ice/candidates/
-
-Should have multiple documents (may be auto-deleted)
+┌─────────────────────────────┐
+│ Participants                │
+├─────────────────────────────┤
+│ ✓ In Call (4)               │
+│   • User A (Initiator)      │
+│   • User B                  │
+│   • User C                  │
+│   • User D                  │
+└─────────────────────────────┘
 ```
 
 ---
 
-## 🎯 EXPECTED TIMELINE
+## 🎯 What This Tests
 
-| Step | Duration | Cumulative |
-|------|----------|------------|
-| Start call | Instant | 0s |
-| Incoming screen appears | 2-5s | 5s |
-| Accept call | Instant | 5s |
-| Offer/Answer exchange | 1-2s | 7s |
-| ICE candidate exchange | 2-5s | 12s |
-| Connection established | Instant | 12s |
-| Audio flows | Instant | 12s |
-| **Total** | **~12 seconds** | **✅** |
+✅ Room creation  
+✅ Real-time Firestore sync  
+✅ Participant tracking  
+✅ Join/Leave lifecycle  
+✅ **Rejoin after leave (Phase 1.2)** 🆕  
+✅ **Join after decline (Phase 1.2)** 🆕  
+✅ Initiator ending call  
+✅ Status transitions  
+✅ UI updates across devices  
 
-If taking longer than 30 seconds, something is wrong.
-
----
-
-## 📝 REPORTING RESULTS
-
-### If Success ✅
-Report:
-- ✅ All tests passed
-- ✅ Audio quality: Good/Excellent
-- ✅ Connection time: ~X seconds
-- ✅ No errors in console
-
-### If Failure ❌
-Report:
-- Which step failed?
-- Console logs from both devices
-- Firestore screenshots
-- Error messages
-- Network type (WiFi/Mobile data)
+❌ NOT tested (comes in Phase 2+):  
+- Audio streaming
+- Video streaming
+- WebRTC connections
+- Call quality
+- Network issues
 
 ---
 
-**Quick Reference:** This is a condensed test guide. For full details, see `test_group_call_signaling.md`.
+## ⚡ Pro Tips
 
-**Last Updated:** 2026-06-26
+1. **Open test screen on all devices before starting**
+   - Easier to see instant updates
+
+2. **Watch the participant count**
+   - Should increment/decrement immediately
+
+3. **Check console logs**
+   - See `[GROUP_SIGNAL]` markers
+
+4. **Test decline button too**
+   - Start new call
+   - Have one user decline
+   - Others should still be able to join
+
+5. **Test last participant leaving**
+   - Start call with 2 users
+   - Have both leave (non-initiator first)
+   - Room should auto-end
+
+6. **Test rejoin (Phase 1.2)** 🆕
+   - Start call
+   - User joins then leaves
+   - User sees "Rejoin Call" button
+   - User taps and rejoins successfully
+
+7. **Test join after decline (Phase 1.2)** 🆕
+   - Start call
+   - User declines invitation
+   - User sees "Join Call" button
+   - User taps and joins successfully
+
+---
+
+**Total Test Time:** 5-7 minutes  
+**Required Devices:** 4  
+**Network:** Internet required  
+**Audio/Video:** None (room management only)

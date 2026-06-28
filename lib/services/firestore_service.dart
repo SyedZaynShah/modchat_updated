@@ -41,6 +41,8 @@ class FirestoreService {
       _db.collection('calls');
   CollectionReference<Map<String, dynamic>> get callLogs =>
       _db.collection('callLogs');
+  CollectionReference<Map<String, dynamic>> get groupCallRooms =>
+      _db.collection('groupCallRooms');
   CollectionReference<Map<String, dynamic>> get groupCalls =>
       _db.collection('groupCalls');
   CollectionReference<Map<String, dynamic>> messages(String chatId) =>

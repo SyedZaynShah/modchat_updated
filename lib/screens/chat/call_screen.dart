@@ -248,6 +248,11 @@ class _CallScreenState extends ConsumerState<CallScreen>
 
   @override
   void dispose() {
+    print('[CALL_RECOVERY] ========================================');
+    print('[CALL_RECOVERY] CallScreen.dispose() called');
+    print('[CALL_RECOVERY] Call ID: ${widget.callId}');
+    print('[CALL_RECOVERY] Will dispose WebRTC controller: ${_callController != null}');
+    
     _callSubscription?.cancel();
     _pulseController.dispose();
     _callDurationTimer?.cancel();
@@ -255,6 +260,9 @@ class _CallScreenState extends ConsumerState<CallScreen>
     
     // Dispose WebRTC controller
     _callController?.dispose();
+    
+    print('[CALL_RECOVERY] CallScreen.dispose() complete');
+    print('[CALL_RECOVERY] ========================================');
     
     super.dispose();
   }

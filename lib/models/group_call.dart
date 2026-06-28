@@ -45,13 +45,9 @@ class GroupCall {
   final List<String> joinedParticipants; // Users who accepted and joined
   final List<String> declinedParticipants; // Users who declined
   final List<String> leftParticipants; // Users who left after joining
-  final List<String> speakingParticipants; // PHASE 3: Currently speaking users
   final GroupCallStatus status;
   final Timestamp createdAt;
-  final Timestamp? startedAt; // PHASE 3: When first participant joins
-  final Timestamp? endedAt; // PHASE 3: When call ends
-  final String? type; // PHASE 3: 'group_audio'
-  final int? maxParticipants; // PHASE 3: 8
+  final Timestamp? startedAt; // When the call actually started (first user joined)
 
   GroupCall({
     required this.callId,
@@ -61,13 +57,9 @@ class GroupCall {
     required this.joinedParticipants,
     required this.declinedParticipants,
     required this.leftParticipants,
-    this.speakingParticipants = const [],
     required this.status,
     required this.createdAt,
     this.startedAt,
-    this.endedAt,
-    this.type,
-    this.maxParticipants,
   });
 
   factory GroupCall.fromFirestore(DocumentSnapshot doc) {
@@ -80,13 +72,9 @@ class GroupCall {
       joinedParticipants: List<String>.from(data['joinedParticipants'] as List? ?? []),
       declinedParticipants: List<String>.from(data['declinedParticipants'] as List? ?? []),
       leftParticipants: List<String>.from(data['leftParticipants'] as List? ?? []),
-      speakingParticipants: List<String>.from(data['speakingParticipants'] as List? ?? []),
       status: GroupCallStatusExt.fromString(data['status'] as String?),
       createdAt: data['createdAt'] as Timestamp? ?? Timestamp.now(),
       startedAt: data['startedAt'] as Timestamp?,
-      endedAt: data['endedAt'] as Timestamp?,
-      type: data['type'] as String?,
-      maxParticipants: data['maxParticipants'] as int?,
     );
   }
 
@@ -98,13 +86,9 @@ class GroupCall {
       'joinedParticipants': joinedParticipants,
       'declinedParticipants': declinedParticipants,
       'leftParticipants': leftParticipants,
-      'speakingParticipants': speakingParticipants,
       'status': status.toFirestore(),
       'createdAt': createdAt,
-      if (startedAt != null) 'startedAt': startedAt,
-      if (endedAt != null) 'endedAt': endedAt,
-      if (type != null) 'type': type,
-      if (maxParticipants != null) 'maxParticipants': maxParticipants,
+      'startedAt': startedAt,
     };
   }
 
@@ -116,13 +100,9 @@ class GroupCall {
     List<String>? joinedParticipants,
     List<String>? declinedParticipants,
     List<String>? leftParticipants,
-    List<String>? speakingParticipants,
     GroupCallStatus? status,
     Timestamp? createdAt,
     Timestamp? startedAt,
-    Timestamp? endedAt,
-    String? type,
-    int? maxParticipants,
   }) {
     return GroupCall(
       callId: callId ?? this.callId,
@@ -132,13 +112,9 @@ class GroupCall {
       joinedParticipants: joinedParticipants ?? this.joinedParticipants,
       declinedParticipants: declinedParticipants ?? this.declinedParticipants,
       leftParticipants: leftParticipants ?? this.leftParticipants,
-      speakingParticipants: speakingParticipants ?? this.speakingParticipants,
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       startedAt: startedAt ?? this.startedAt,
-      endedAt: endedAt ?? this.endedAt,
-      type: type ?? this.type,
-      maxParticipants: maxParticipants ?? this.maxParticipants,
     );
   }
 }

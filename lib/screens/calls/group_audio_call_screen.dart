@@ -7,17 +7,15 @@ import '../../services/firestore_service.dart';
 import '../../models/group_call.dart';
 import '../../models/user_model.dart';
 
-/// PHASE 1: Group Call Screen - Room Management Only
+/// PHASE 1: Group Audio Call Screen - Room Management Only
 /// 
-/// This screen shows participant status without any WebRTC functionality.
-/// NO audio transport, NO mute/speaker controls, NO WebRTC.
+/// Simple group call UI with:
+/// ✓ Room participant tracking
+/// ✓ Participant status display (Joined, Invited, Declined, Left)
+/// ✓ Join/Leave functionality
+/// ✓ Real-time updates
 /// 
-/// Just shows:
-/// - Joined participants (green)
-/// - Invited participants (orange)
-/// - Declined participants (red)
-/// - Left participants (grey)
-/// - Leave/End call button
+/// NOTE: This is Phase 1 - NO WebRTC audio transport yet
 class GroupAudioCallScreen extends ConsumerStatefulWidget {
   final String callId;
   final String groupId;

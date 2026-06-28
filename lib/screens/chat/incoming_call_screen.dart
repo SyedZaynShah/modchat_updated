@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../providers/call_providers.dart';
 import '../../models/call_state.dart';
 import '../../widgets/call_status_overlay.dart';
+import '../../services/firestore_service.dart';
+import '../../services/group_call_room_service.dart';
 import 'call_screen.dart';
 import 'video_call_screen.dart';
+import '../calls/group_audio_call_screen.dart';
 
 class IncomingCallScreen extends ConsumerStatefulWidget {
   static const routeName = '/incoming-call';
@@ -211,8 +215,43 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen> {
                         GestureDetector(
                           onTap: () async {
                             try {
+                              print('[IncomingCall] Accepting call: ${widget.callId}');
+                              
                               await callService.acceptCall(widget.callId);
-                              if (context.mounted) {
+                              
+                              // Check if this is a group call
+                              final roomService = GroupCallRoomService();
+                              final room = await roomService.getRoomByCallId(widget.callId);
+                              
+                              if (room != null) {
+                                print('[IncomingCall] This is a GROUP call, room: ${room.roomId}');
+                                
+                                // Join the room
+                                final currentUserId = FirebaseAuth.instance.currentUser!.uid;
+                                await roomService.joinRoom(room.roomId, currentUserId);
+                                
+                                // Load group name
+                                final groupDoc = await FirestoreService().dmChats.doc(room.groupId).get();
+                                final groupName = groupDoc.data()?['name'] as String? ?? 'Group';
+                                
+                                if (!context.mounted) return;
+                                
+                                // Navigate to group call screen
+                                Navigator.of(context).pushReplacement(
+                                  MaterialPageRoute(
+                                    builder: (_) => GroupAudioCallScreen(
+                                      callId: room.roomId,
+                                      groupId: room.groupId,
+                                      groupName: groupName,
+                                      isInitiator: false,
+                                    ),
+                                  ),
+                                );
+                              } else {
+                                print('[IncomingCall] This is a 1-to-1 call');
+                                
+                                if (!context.mounted) return;
+                                
                                 // Route to appropriate screen based on call type
                                 if (widget.callType == 'video') {
                                   Navigator.of(context).pushReplacement(
@@ -239,6 +278,8 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen> {
                                 }
                               }
                             } catch (e) {
+                              print('[IncomingCall] Error accepting call: $e');
+                              
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(content: Text('Failed to accept call: $e')),

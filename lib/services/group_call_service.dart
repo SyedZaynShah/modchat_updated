@@ -254,81 +254,105 @@ class GroupCallService {
   /// - Add to joinedParticipants
   /// - Change status to "active" when first non-initiator joins
   /// PHASE 3: Enforce 8-participant limit
-  /// PHASE 3.1: Support rejoin - remove from leftParticipants if present
-  /// PHASE 3.1: Use Firestore transaction to prevent race conditions
   Future<void> joinGroupCall(String callId, String userId) async {
     print('[GroupCallService] ➕ User $userId joining call $callId');
     
     try {
-      // PHASE 3.1: Use transaction for atomic participant count check
-      await _firestoreService.firestore.runTransaction((transaction) async {
-        final callRef = _firestoreService.groupCalls.doc(callId);
-        final callDoc = await transaction.get(callRef);
-        
-        if (!callDoc.exists) {
-          throw Exception('Call not found');
-        }
-        
-        final call = GroupCall.fromFirestore(callDoc);
-        
-        // PHASE 3.1: Atomic check - participant limit
-        if (call.joinedParticipants.length >= 8) {
-          print('[GroupCallService] ⚠️ Call is full (max 8 participants)');
-          throw Exception('Call is full. Maximum 8 participants allowed.');
-        }
-        
-        // Duplicate join protection - already in call
-        if (call.joinedParticipants.contains(userId)) {
-          print('[GroupCallService] ⚠️ User already joined');
-          return; // No-op, transaction will succeed without changes
-        }
-        
-        // Block declined users from joining
-        if (call.declinedParticipants.contains(userId)) {
-          print('[GroupCallService] ⚠️ User already declined - cannot join');
-          throw Exception('Cannot join after declining');
-        }
-        
-        // PHASE 3.1 FIX: Allow rejoin - remove from leftParticipants
-        final wasInLeftParticipants = call.leftParticipants.contains(userId);
-        if (wasInLeftParticipants) {
-          print('[GroupCallService] 🔄 User rejoining after leaving');
-        }
-        
-        // Check if user was invited (or is rejoining)
-        if (!call.invitedParticipants.contains(userId) && 
-            call.initiatorId != userId && 
-            !wasInLeftParticipants) {
-          throw Exception('You are not invited to this call');
-        }
-        
-        // PHASE 3.1: Atomic update - build transaction updates
-        final updates = <String, dynamic>{
-          'joinedParticipants': FieldValue.arrayUnion([userId]),
-          'status': 'active', // Activate when anyone joins
-          'startedAt': FieldValue.serverTimestamp(), // PHASE 3: Track start time
-        };
-        
-        // Remove from invited if present
-        if (call.invitedParticipants.contains(userId)) {
-          updates['invitedParticipants'] = FieldValue.arrayRemove([userId]);
-        }
-        
-        // Remove from leftParticipants if rejoining
-        if (wasInLeftParticipants) {
-          updates['leftParticipants'] = FieldValue.arrayRemove([userId]);
-        }
-        
-        transaction.update(callRef, updates);
-        
-        print('[GroupCallService] ✅ User joined (transaction committed)');
-        print('[GroupCallService] 📊 Status: active');
-        if (wasInLeftParticipants) {
-          print('[GroupCallService] 🔄 User successfully rejoined');
-        }
+      final callDoc = await _firestoreService.groupCalls.doc(callId).get();
+      if (!callDoc.exists) {
+        throw Exception('Call not found');
+      }
+      
+      final call = GroupCall.fromFirestore(callDoc);
+      
+      // PHASE 3: Check participant limit
+      if (call.joinedParticipants.length >= 8) {
+        print('[GroupCallService] ⚠️ Call is full (max 8 participants)');
+        throw Exception('Call is full. Maximum 8 participants allowed.');
+      }
+      
+      // Duplicate invitation protection
+      if (call.joinedParticipants.contains(userId)) {
+        print('[GroupCallService] ⚠️ User already joined');
+        return;
+      }
+      
+      // PHASE 1.2: Allow rejoining after decline or leave
+      // Remove old protection that prevented rejoining
+      
+      // Check if user was invited
+      if (!call.invitedParticipants.contains(userId) && call.initiatorId != userId) {
+        throw Exception('You are not invited to this call');
+      }
+      
+      // Update room: move from invited to joined
+      await _firestoreService.groupCalls.doc(callId).update({
+        'invitedParticipants': FieldValue.arrayRemove([userId]),
+        'joinedParticipants': FieldValue.arrayUnion([userId]),
+        'status': 'active', // Activate when anyone joins
+        'startedAt': FieldValue.serverTimestamp(), // PHASE 3: Track start time
       });
+      
+      print('[GroupCallService] ✅ User joined');
+      print('[GroupCallService] 📊 Status: active');
     } catch (e) {
       print('[GroupCallService] ❌ Error joining: $e');
+      rethrow;
+    }
+  }
+  
+  /// Rejoin a group call after leaving or declining (PHASE 1.2)
+  /// 
+  /// Allows users to rejoin active calls, matching WhatsApp/Discord behavior.
+  /// Cleans up historical states (left/declined) and moves user to joined.
+  /// 
+  /// Use cases:
+  /// - User accidentally left
+  /// - Network issue caused disconnect
+  /// - User declined but changed their mind
+  /// - App crash/restart
+  Future<void> rejoinGroupCall(String callId, String userId) async {
+    print('[GroupCallService] 🔄 User $userId rejoining call $callId');
+    
+    try {
+      final callDoc = await _firestoreService.groupCalls.doc(callId).get();
+      if (!callDoc.exists) {
+        throw Exception('Call not found');
+      }
+      
+      final call = GroupCall.fromFirestore(callDoc);
+      
+      // Check if call is still active
+      if (call.status == GroupCallStatus.ended) {
+        throw Exception('Call has ended. Cannot rejoin.');
+      }
+      
+      // PHASE 3: Check participant limit
+      if (call.joinedParticipants.length >= 8) {
+        print('[GroupCallService] ⚠️ Call is full (max 8 participants)');
+        throw Exception('Call is full. Maximum 8 participants allowed.');
+      }
+      
+      // Already joined?
+      if (call.joinedParticipants.contains(userId)) {
+        print('[GroupCallService] ⚠️ User already in call');
+        return;
+      }
+      
+      // Update room: clean up old states and add to joined
+      // This handles rejoining from any previous state (left, declined, invited)
+      await _firestoreService.groupCalls.doc(callId).update({
+        'joinedParticipants': FieldValue.arrayUnion([userId]),
+        'leftParticipants': FieldValue.arrayRemove([userId]),
+        'declinedParticipants': FieldValue.arrayRemove([userId]),
+        'invitedParticipants': FieldValue.arrayRemove([userId]),
+        'status': 'active', // Ensure active status
+      });
+      
+      print('[GroupCallService] ✅ User rejoined');
+      print('[GroupCallService] 📊 Status: active');
+    } catch (e) {
+      print('[GroupCallService] ❌ Error rejoining: $e');
       rethrow;
     }
   }
@@ -338,6 +362,7 @@ class GroupCallService {
   /// STEP 5: User declines
   /// - Remove from invitedParticipants
   /// - Add to declinedParticipants
+  /// PHASE 1.2: User can rejoin later using rejoinGroupCall()
   Future<void> declineGroupCall(String callId, String userId) async {
     print('[GroupCallService] ❌ User $userId declining call $callId');
     
@@ -347,21 +372,14 @@ class GroupCallService {
       
       final call = GroupCall.fromFirestore(callDoc);
       
-      // Duplicate invitation protection
-      if (call.declinedParticipants.contains(userId)) {
-        print('[GroupCallService] ⚠️ Already declined');
-        return;
-      }
-      
+      // Already in call? Cannot decline
       if (call.joinedParticipants.contains(userId)) {
-        print('[GroupCallService] ⚠️ Already joined');
+        print('[GroupCallService] ⚠️ Already joined, cannot decline');
         return;
       }
       
-      if (call.leftParticipants.contains(userId)) {
-        print('[GroupCallService] ⚠️ Already left');
-        return;
-      }
+      // PHASE 1.2: Allow declining again (overwrite previous decline)
+      // This handles multiple rapid decline presses gracefully
       
       // Update room: move from invited to declined
       await _firestoreService.groupCalls.doc(callId).update({
@@ -369,7 +387,7 @@ class GroupCallService {
         'declinedParticipants': FieldValue.arrayUnion([userId]),
       });
       
-      print('[GroupCallService] ✅ User declined');
+      print('[GroupCallService] ✅ User declined (can rejoin later)');
     } catch (e) {
       print('[GroupCallService] ❌ Error declining: $e');
       rethrow;

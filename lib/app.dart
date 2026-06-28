@@ -20,8 +20,8 @@ import 'screens/group/moderation_dashboard_screen.dart';
 import 'screens/group/join_group_screen.dart';
 import 'ui/splash/splash_screen.dart';
 import 'widgets/incoming_call_listener.dart';
-import 'widgets/incoming_group_call_listener.dart';
 import 'widgets/signal_test_widget.dart';
+import 'services/call_recovery_service.dart';
 
 final GlobalKey<NavigatorState> _navKey = GlobalKey<NavigatorState>();
 
@@ -110,15 +110,11 @@ class _AppState extends ConsumerState<App> {
       themeAnimationDuration: const Duration(milliseconds: 250),
       navigatorKey: _navKey,
       home: const SignalTestWidget(
-        child: IncomingGroupCallListener(
-          child: IncomingCallListener(child: ModChatSplashScreen()),
-        ),
+        child: IncomingCallListener(child: ModChatSplashScreen()),
       ),
       routes: {
         "/home": (context) => const SignalTestWidget(
-          child: IncomingGroupCallListener(
-            child: IncomingCallListener(child: AuthGate()),
-          ),
+          child: IncomingCallListener(child: AuthGate()),
         ),
         LandingScreen.routeName: (context) => const LandingScreen(),
       },
@@ -196,24 +192,53 @@ class _AppState extends ConsumerState<App> {
 }
 
 /// ✅ AuthGate that always uses fresh user info
-class AuthGate extends ConsumerWidget {
+/// Auth gate with stale call cleanup on login
+class AuthGate extends ConsumerStatefulWidget {
   const AuthGate({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends ConsumerState<AuthGate> {
+  final CallRecoveryService _recoveryService = CallRecoveryService();
+  String? _lastUserId;
+  bool _cleanupDone = false;
+
+  Future<void> _runCleanupIfNeeded(User? user) async {
+    if (user == null) {
+      _cleanupDone = false;
+      _lastUserId = null;
+      return;
+    }
+
+    // Only run once per login session
+    if (_cleanupDone && _lastUserId == user.uid) {
+      return;
+    }
+
+    _lastUserId = user.uid;
+    _cleanupDone = true;
+
+    print('[AuthGate] 🧹 User logged in, running stale call cleanup...');
+    await _recoveryService.cleanupStaleCalls();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Scaffold(
-            backgroundColor: AppColors.background,
+            backgroundColor: Colors.white,
             body: const Center(
               child: SizedBox(
                 width: 20,
                 height: 20,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: AppColors.highlight,
+                  color: Colors.blue,
                 ),
               ),
             ),
@@ -221,6 +246,12 @@ class AuthGate extends ConsumerWidget {
         }
 
         final user = snapshot.data;
+        
+        // Run cleanup when user logs in
+        if (user != null && user.emailVerified) {
+          _runCleanupIfNeeded(user);
+        }
+
         if (user == null) return const LoginScreen();
 
         if (!user.emailVerified) return const VerifyEmailScreen();

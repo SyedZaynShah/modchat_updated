@@ -71,12 +71,25 @@ class CallController {
     this.onReconnectionStateChange,
   });
 
+  // PHASE 0.5: ECHO INVESTIGATION - Tracking initialization
+  static int _initializeCallCount = 0;
+  int _myInitializeCount = 0;
+
   /// Initialize WebRTC peer connection
   Future<void> initialize() async {
     if (_isDisposed) {
       print('[CallController] Already disposed, cannot initialize');
       return;
     }
+
+    _initializeCallCount++;
+    _myInitializeCount++;
+    print('[ECHO_TEST] ========================================');
+    print('[ECHO_TEST] INITIALIZE called (Global: $_initializeCallCount, This instance: $_myInitializeCount)');
+    print('[ECHO_TEST] CallId: $callId');
+    print('[ECHO_TEST] IsInitiator: $isInitiator');
+    print('[ECHO_TEST] IsVideoCall: $isVideoCall');
+    print('[ECHO_TEST] ========================================');
 
     try {
       print('[CallController] Initializing WebRTC for call: $callId (initiator: $isInitiator, video: $isVideoCall)');
@@ -182,6 +195,19 @@ class CallController {
       
       print('[CallController] 📊 TRACK_COUNT: Audio=$audioTracks, Video=$videoTracks');
       
+      // PHASE 0.5: ECHO INVESTIGATION
+      print('[ECHO_TEST] ========================================');
+      print('[ECHO_TEST] LOCAL STREAM ACQUIRED');
+      print('[ECHO_TEST] Stream ID: ${_localStream?.id}');
+      print('[ECHO_TEST] Local audio tracks: $audioTracks');
+      print('[ECHO_TEST] Local video tracks: $videoTracks');
+      if (audioTracks > 0) {
+        final track = _localStream!.getAudioTracks().first;
+        print('[ECHO_TEST] Audio track ID: ${track.id}');
+        print('[ECHO_TEST] Audio track enabled: ${track.enabled}');
+      }
+      print('[ECHO_TEST] ========================================');
+      
       if (audioTracks > 0) {
         _mediaState = MediaState.audioReady;
         print('[CallController] ✅ MEDIA_STATE: audioReady');
@@ -227,9 +253,20 @@ class CallController {
 
     // Add local stream tracks to peer connection
     if (_localStream != null) {
-      _localStream!.getTracks().forEach((track) {
+      final tracks = _localStream!.getTracks();
+      print('[ECHO_TEST] ========================================');
+      print('[ECHO_TEST] ADDING LOCAL TRACKS TO PEER CONNECTION');
+      print('[ECHO_TEST] Total tracks to add: ${tracks.length}');
+      
+      int addTrackCount = 0;
+      tracks.forEach((track) {
+        addTrackCount++;
+        print('[ECHO_TEST] addTrack() call #$addTrackCount - Track kind: ${track.kind}, ID: ${track.id}, enabled: ${track.enabled}');
         _peerConnection!.addTrack(track, _localStream!);
       });
+      
+      print('[ECHO_TEST] Total addTrack() calls: $addTrackCount');
+      print('[ECHO_TEST] ========================================');
       print('[CallController] Local tracks added to peer connection');
     }
 
@@ -242,23 +279,79 @@ class CallController {
     };
 
     // Handle remote stream
+    // PHASE 0.5: ECHO INVESTIGATION - Tracking onTrack callbacks
+    int onTrackCallCount = 0;
+    final Set<String> seenStreamIds = {};
+    final Set<String> seenTrackIds = {};
+    int rendererAssignmentCount = 0;
+    int callbackInvocationCount = 0;
+    
     _peerConnection!.onTrack = (RTCTrackEvent event) {
+      onTrackCallCount++;
+      print('[ECHO_TEST] ========================================');
+      print('[ECHO_TEST] ONTRACK FIRED #$onTrackCallCount');
+      print('[ECHO_TEST] Track kind: ${event.track.kind}');
+      print('[ECHO_TEST] Track ID: ${event.track.id ?? "null"}');
+      print('[ECHO_TEST] Track enabled: ${event.track.enabled}');
+      print('[ECHO_TEST] Number of streams in event: ${event.streams.length}');
+      
+      final trackId = event.track.id ?? 'unknown-${DateTime.now().millisecondsSinceEpoch}';
+      if (seenTrackIds.contains(trackId)) {
+        print('[ECHO_TEST] ⚠️ WARNING: Track ID $trackId seen before!');
+      } else {
+        seenTrackIds.add(trackId);
+        print('[ECHO_TEST] ✅ New track ID (total unique tracks: ${seenTrackIds.length})');
+      }
+      
       print('[CallController] 🎯 TRACK_RECEIVED: ${event.track.kind} track (ID: ${event.track.id}, enabled: ${event.track.enabled})');
       if (event.streams.isNotEmpty) {
+        final streamId = event.streams[0].id;
+        
+        print('[ECHO_TEST] Stream ID: $streamId');
+        if (seenStreamIds.contains(streamId)) {
+          print('[ECHO_TEST] ⚠️ WARNING: Stream ID $streamId seen before!');
+        } else {
+          seenStreamIds.add(streamId);
+          print('[ECHO_TEST] ✅ New stream ID (total unique streams: ${seenStreamIds.length})');
+        }
+        
         _remoteStream = event.streams[0];
+        
+        final audioTracks = _remoteStream!.getAudioTracks().length;
+        final videoTracks = _remoteStream!.getVideoTracks().length;
+        print('[ECHO_TEST] Remote audio tracks: $audioTracks');
+        print('[ECHO_TEST] Remote video tracks: $videoTracks');
+        
         print('[CallController] 📡 REMOTE_STREAM: Stream received (ID: ${_remoteStream?.id})');
         
         // Attach remote stream to renderer if video call
         if (isVideoCall && remoteRenderer != null && _remoteRendererReady) {
+          rendererAssignmentCount++;
+          print('[ECHO_TEST] RENDERER ASSIGNMENT #$rendererAssignmentCount');
+          print('[ECHO_TEST] Assigning stream $streamId to remoteRenderer');
           remoteRenderer!.srcObject = _remoteStream;
           print('[CallController] ✅ RENDERER_ATTACH: Remote stream attached to renderer');
         } else if (isVideoCall && !_remoteRendererReady) {
           print('[CallController] ⚠️ RENDERER_WARNING: Remote renderer not ready, cannot attach stream');
         }
         
+        callbackInvocationCount++;
+        print('[ECHO_TEST] CALLBACK INVOCATION #$callbackInvocationCount');
+        print('[ECHO_TEST] Invoking onRemoteStream callback');
         onRemoteStream?.call(_remoteStream!);
         print('[CallController] ✅ REMOTE_STREAM: Callback invoked');
+        
+        print('[ECHO_TEST] ========================================');
+        print('[ECHO_TEST] SUMMARY SO FAR:');
+        print('[ECHO_TEST] - Total onTrack calls: $onTrackCallCount');
+        print('[ECHO_TEST] - Unique tracks: ${seenTrackIds.length}');
+        print('[ECHO_TEST] - Unique streams: ${seenStreamIds.length}');
+        print('[ECHO_TEST] - Renderer assignments: $rendererAssignmentCount');
+        print('[ECHO_TEST] - Callback invocations: $callbackInvocationCount');
+        print('[ECHO_TEST] ========================================');
       } else {
+        print('[ECHO_TEST] ⚠️ NO STREAMS in event!');
+        print('[ECHO_TEST] ========================================');
         print('[CallController] ⚠️ TRACK_WARNING: Track received but no streams!');
       }
     };
@@ -721,6 +814,11 @@ class CallController {
       print('[CallController] ⚠️ DISPOSE_SKIP: Already disposed');
       return;
     }
+    
+    print('[ECHO_TEST] ========================================');
+    print('[ECHO_TEST] DISPOSE CALLED');
+    print('[ECHO_TEST] This instance initialized: $_myInitializeCount times');
+    print('[ECHO_TEST] ========================================');
     
     print('[CallController] ⏳ DISPOSE_START: Disposing CallController (video: $isVideoCall)...');
     final startTime = DateTime.now();

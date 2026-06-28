@@ -309,13 +309,13 @@ class CallPeerConnection {
       final rawData = snapshot.data();
       if (rawData == null) return;
       
-      final data = Map<String, dynamic>.from(rawData);
+      final data = rawData as Map<String, dynamic>;
 
       // If receiver, look for offer
       if (!isInitiator && !_answerCreated && data.containsKey('offer')) {
         final offerData = data['offer'];
         if (offerData is Map) {
-          final offer = Map<String, dynamic>.from(offerData as Map);
+          final offer = offerData as Map<String, dynamic>;
           if (offer['sdp'] != null) {
             print('[CallPeerConnection] Offer received from Firestore');
             _createAnswer(offer);

@@ -196,9 +196,18 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
 
   @override
   void dispose() {
+    print('[CALL_RECOVERY] ========================================');
+    print('[CALL_RECOVERY] VideoCallScreen.dispose() called');
+    print('[CALL_RECOVERY] Call ID: ${widget.callId}');
+    print('[CALL_RECOVERY] Will dispose WebRTC controller: ${_callController != null}');
+    
     _durationTimer?.cancel();
     _callSubscription?.cancel();
     _callController?.dispose();
+    
+    print('[CALL_RECOVERY] VideoCallScreen.dispose() complete');
+    print('[CALL_RECOVERY] ========================================');
+    
     super.dispose();
   }
 

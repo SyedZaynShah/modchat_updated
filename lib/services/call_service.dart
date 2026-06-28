@@ -19,6 +19,9 @@ class CallService {
 
   /// Check if user has an active call
   Future<Map<String, dynamic>> checkActiveCall(String userId) async {
+    print('[CALL_RECOVERY] ========================================');
+    print('[CALL_RECOVERY] Checking active calls for user: $userId');
+    
     try {
       // Check if user is caller in an active call
       final asCallerQuery = await _firestoreService.calls
@@ -27,11 +30,39 @@ class CallService {
           .limit(1)
           .get();
 
+      print('[CALL_RECOVERY] Caller query results: ${asCallerQuery.docs.length} docs');
+      
       if (asCallerQuery.docs.isNotEmpty) {
+        final doc = asCallerQuery.docs.first;
+        final data = doc.data();
+        
+        print('[CALL_RECOVERY] 🚨 ACTIVE CALL FOUND (as caller)');
+        print('[CALL_RECOVERY] Call ID: ${doc.id}');
+        print('[CALL_RECOVERY] Status: ${data['status']}');
+        print('[CALL_RECOVERY] Caller ID: ${data['callerId']}');
+        print('[CALL_RECOVERY] Receiver ID: ${data['receiverId']}');
+        print('[CALL_RECOVERY] Created At: ${data['createdAt']}');
+        print('[CALL_RECOVERY] Answered At: ${data['answeredAt']}');
+        print('[CALL_RECOVERY] Type: ${data['type']}');
+        
+        // Calculate age
+        final createdAt = data['createdAt'] as Timestamp?;
+        if (createdAt != null) {
+          final age = DateTime.now().difference(createdAt.toDate());
+          print('[CALL_RECOVERY] Call age: ${age.inMinutes} minutes, ${age.inSeconds % 60} seconds');
+          
+          if (age.inMinutes > 5) {
+            print('[CALL_RECOVERY] ⚠️ WARNING: Call is > 5 minutes old - likely stale');
+          }
+        }
+        
+        print('[CALL_RECOVERY] ========================================');
+        
         return {
           'hasActiveCall': true,
-          'callId': asCallerQuery.docs.first.id,
+          'callId': doc.id,
           'role': 'caller',
+          'data': data,
         };
       }
 
@@ -42,17 +73,49 @@ class CallService {
           .limit(1)
           .get();
 
+      print('[CALL_RECOVERY] Receiver query results: ${asReceiverQuery.docs.length} docs');
+
       if (asReceiverQuery.docs.isNotEmpty) {
+        final doc = asReceiverQuery.docs.first;
+        final data = doc.data();
+        
+        print('[CALL_RECOVERY] 🚨 ACTIVE CALL FOUND (as receiver)');
+        print('[CALL_RECOVERY] Call ID: ${doc.id}');
+        print('[CALL_RECOVERY] Status: ${data['status']}');
+        print('[CALL_RECOVERY] Caller ID: ${data['callerId']}');
+        print('[CALL_RECOVERY] Receiver ID: ${data['receiverId']}');
+        print('[CALL_RECOVERY] Created At: ${data['createdAt']}');
+        print('[CALL_RECOVERY] Answered At: ${data['answeredAt']}');
+        print('[CALL_RECOVERY] Type: ${data['type']}');
+        
+        // Calculate age
+        final createdAt = data['createdAt'] as Timestamp?;
+        if (createdAt != null) {
+          final age = DateTime.now().difference(createdAt.toDate());
+          print('[CALL_RECOVERY] Call age: ${age.inMinutes} minutes, ${age.inSeconds % 60} seconds');
+          
+          if (age.inMinutes > 5) {
+            print('[CALL_RECOVERY] ⚠️ WARNING: Call is > 5 minutes old - likely stale');
+          }
+        }
+        
+        print('[CALL_RECOVERY] ========================================');
+
         return {
           'hasActiveCall': true,
-          'callId': asReceiverQuery.docs.first.id,
+          'callId': doc.id,
           'role': 'receiver',
+          'data': data,
         };
       }
 
+      print('[CALL_RECOVERY] ✅ No active calls found');
+      print('[CALL_RECOVERY] ========================================');
+
       return {'hasActiveCall': false};
     } catch (e) {
-      print('Error checking active call: $e');
+      print('[CALL_RECOVERY] ❌ ERROR checking active call: $e');
+      print('[CALL_RECOVERY] ========================================');
       return {'hasActiveCall': false, 'error': e};
     }
   }

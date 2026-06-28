@@ -12,10 +12,10 @@ import '../../models/message_model.dart';
 import '../../models/reply_target.dart';
 import '../../providers/chat_providers.dart';
 import '../../providers/user_providers.dart';
-import '../../providers/group_call_providers.dart';
 import '../../services/firestore_service.dart';
 import '../../services/supabase_service.dart';
 import '../../services/storage_service.dart';
+import '../../services/group_call_room_service.dart';
 import '../group/group_settings_screen.dart';
 import '../../widgets/group_message_bubble.dart';
 import '../../widgets/video_viewer_screen.dart';
@@ -27,6 +27,7 @@ import '../../widgets/chat_typing_indicator.dart';
 import '../../services/typing_controller.dart';
 import 'forward_select_screen.dart';
 import '../calls/group_audio_call_screen.dart';
+import '../calls/group_call_test_screen.dart';
 
 final Map<String, ImageProvider> _groupViewerProviders =
     <String, ImageProvider>{};
@@ -321,14 +322,14 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
   }
 
   Future<void> _startGroupAudioCall(List<String> members) async {
-    final groupCallService = ref.read(groupCallServiceProvider);
+    final roomService = GroupCallRoomService();
     final currentUser = FirebaseAuth.instance.currentUser;
     
     if (currentUser == null) return;
 
     try {
       // Check permission first
-      final canStart = await groupCallService.canStartGroupCall(widget.chatId);
+      final canStart = await roomService.canStartGroupCall(widget.chatId);
       if (!canStart) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -340,17 +341,23 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
       }
 
       // Check for existing active call
-      final existingCall = await groupCallService.getActiveGroupCall(widget.chatId);
-      if (existingCall != null) {
+      final existingRoom = await roomService.getActiveRoom(widget.chatId);
+      if (existingRoom != null) {
         if (!mounted) return;
+        
+        print('[GroupChat] Active call found, joining room: ${existingRoom.roomId}');
+        
+        // Get group name
+        final groupDoc = await FirestoreService().dmChats.doc(widget.chatId).get();
+        final groupName = groupDoc.data()?['name'] as String? ?? 'Group';
         
         // Join existing call
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (context) => GroupAudioCallScreen(
-              callId: existingCall.callId,
+              callId: existingRoom.roomId,
               groupId: widget.chatId,
-              groupName: 'Group', // Will be fetched in screen
+              groupName: groupName,
               isInitiator: false,
             ),
           ),
@@ -358,11 +365,26 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
         return;
       }
 
+      // Get current user name
+      final userDoc = await FirestoreService().users.doc(currentUser.uid).get();
+      final userName = userDoc.data()?['username'] as String? ?? 'User';
+      
+      // Get group name
+      final groupDoc = await FirestoreService().dmChats.doc(widget.chatId).get();
+      final groupName = groupDoc.data()?['name'] as String? ?? 'Group';
+
+      print('[GroupChat] Starting group audio call');
+      print('[GroupChat] Group: $groupName');
+      print('[GroupChat] Host: $userName');
+
       // Start new group call
-      final callId = await groupCallService.startGroupAudioCall(
+      final roomId = await roomService.startGroupAudioCall(
         groupId: widget.chatId,
-        initiatorId: currentUser.uid,
+        hostId: currentUser.uid,
+        hostName: userName,
       );
+
+      print('[GroupChat] Room created: $roomId');
 
       if (!mounted) return;
 
@@ -370,18 +392,23 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (context) => GroupAudioCallScreen(
-            callId: callId,
+            callId: roomId,
             groupId: widget.chatId,
-            groupName: 'Group', // Will be fetched in screen
+            groupName: groupName,
             isInitiator: true,
           ),
         ),
       );
     } catch (e) {
+      print('[GroupChat] Error starting call: $e');
+      
       if (!mounted) return;
       
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to start call: $e')),
+        SnackBar(
+          content: Text('Failed to start call: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -1363,6 +1390,22 @@ class _GroupChatDetailScreenState extends ConsumerState<GroupChatDetailScreen>
                         onPressed: () {},
                         icon: const Icon(Icons.search_rounded),
                         tooltip: 'Search',
+                      ),
+                      // PHASE 1.1 TEST BUTTON
+                      IconButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => GroupCallTestScreen(
+                                groupId: widget.chatId,
+                                groupName: title ?? 'Group',
+                              ),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.science_rounded),
+                        tooltip: 'Test Group Room (Phase 1.1)',
+                        color: Colors.orange,
                       ),
                       IconButton(
                         onPressed: () => _startGroupAudioCall(members),

@@ -14,6 +14,7 @@ import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/supabase_service.dart';
 import '../../theme/theme.dart';
+import '../debug/call_debug_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -1045,6 +1046,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onTap: () => ScaffoldMessenger.of(
                   context,
                 ).showSnackBar(const SnackBar(content: Text('Cache cleared'))),
+              ),
+              
+              // DEBUG: Call Debug Screen
+              _SettingsTile(
+                icon: Icons.bug_report,
+                title: 'Call Debug (Dev)',
+                value: 'View & force-end calls',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const CallDebugScreen(),
+                    ),
+                  );
+                },
               ),
 
               const SizedBox(height: 18),

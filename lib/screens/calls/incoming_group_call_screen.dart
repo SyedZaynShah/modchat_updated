@@ -71,13 +71,9 @@ class _IncomingGroupCallScreenState
         .doc(widget.callId)
         .snapshots()
         .listen((snapshot) {
-      if (!mounted) return;
-      
       if (!snapshot.exists) {
         print('[IncomingGroupCallScreen] Call document deleted');
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _endCall();
-        });
+        _endCall();
         return;
       }
 
@@ -89,10 +85,8 @@ class _IncomingGroupCallScreenState
       // If call is no longer ringing, close this screen
       if (status != 'ringing') {
         print('[IncomingGroupCallScreen] Call status changed to $status');
-        if (status == 'ended') {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _endCall();
-          });
+        if (status == 'ended' && mounted) {
+          _endCall();
         }
       }
     });
